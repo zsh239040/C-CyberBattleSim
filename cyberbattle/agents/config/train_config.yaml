@@ -2,11 +2,11 @@
 
 episode_iterations: 200 # cut-off considered regardless of K
 proportional_cutoff_coefficient: 1 # whether to use a cut-off proportional to the number of nodes (K) and of how much, or -1 if not
-winning_reward: 300 # winning reward to add if the attacker goal is reached
-train_iterations: 25000 # number of training iterations
+winning_reward: 5000 # winning reward to add if the attacker goal is reached
+train_iterations: 300000 # number of training iterations
 switch_interval: 5 # across the training set, in episodes
 absolute_reward: False # whether to have a reward = max(0, reward) of the original one
-losing_reward: -300 # losing reward to add if the attacker has lost
+losing_reward: -5000 # losing reward to add if the attacker has lost
 random_starter_node: True # whether the starter node should be changed periodically and randomly during training
 stop_at_goal_reached: True # stop episode when goal is reached or not ?
 norm_obs: False # whether to normalize observations
@@ -49,5 +49,5 @@ test_ratio: 0.2
 
 # Validation set callback
 val_switch_interval: 1 # in episodes, how frequently to switch the validation graphs in the set
-val_freq: 30000 # frequency of validation
-n_val_episodes: 10 # how many episodes to run overall every val_freq
+val_freq: 4096 # frequency of validation
+n_val_episodes: 5 # how many episodes to run overall every val_freq

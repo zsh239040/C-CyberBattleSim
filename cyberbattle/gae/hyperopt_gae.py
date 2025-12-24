@@ -16,6 +16,7 @@ import numpy as np
 import random
 import optuna
 import sys
+import torch
 from pathlib import Path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, project_root)
@@ -100,12 +101,14 @@ def objective(trial, logs_folder, envs_folder, config, hyperparams_ranges, logge
         logger.info(f"Trial folder: {os.path.basename(trial_folder.rstrip('/'))}")
     os.makedirs(trial_folder, exist_ok=True)
     # Save the modified configuration for reproducibility
-    return train_main(config, trial_folder, envs_folder, logger)
+    return train_main(trial_config, trial_folder, envs_folder, logger)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train a GNN Autoencoder')
-    parser.add_argument('--name', default=False, help='Name of the logs folder related to the run')
+    parser.add_argument('--name', default="GAE", help='Name of the logs folder related to the run')
+    parser.add_argument('--resume_logs', default=None,
+                        help='Path to an existing hyperopt logs folder to resume from')
     parser.add_argument('--static_seeds', action='store_true', default=False, help='Use a static seed for training')
     parser.add_argument('--load_seeds', default="config",
                         help='Path of the folder where the seeds.yaml should be loaded from (e.g. previous experiment)')
@@ -113,8 +116,8 @@ if __name__ == "__main__":
     parser.add_argument('--yaml', default=False,
                         help='Read configuration file from YAML file of a previous training')
     parser.add_argument('--num_runs', type=int, default=1, help='Number of runs to perform')
-    parser.add_argument('--holdout', default=False, action="store_true", help='Switch between graphs')
-    parser.add_argument('--load_envs', default=False, type=str, help='Path to the .pkl file containing the graph')
+    parser.add_argument('--holdout', default=True, action="store_true", help='Switch between graphs')
+    parser.add_argument('--load_envs', default="syntethic_deployment_20_graphs_100_nodes", type=str, help='Path to the .pkl file containing the graph')
     parser.add_argument('--no_save_log_file', action='store_false', dest='save_log_file',
                         default=True, help='Disable logging to file; log only to terminal')
     parser.add_argument('-v', '--verbose', type=int, default=1, help='Verbose level: 0, 1, 2, 3')
@@ -143,12 +146,19 @@ if __name__ == "__main__":
     args.hyperparams_ranges_file = os.path.join(script_dir, args.hyperparams_ranges_file)
 
     # Creating logs folder
-    if args.name:
-        logs_folder = os.path.join(script_dir, 'logs/',
-                                   "hyperopt_" + args.name + "_" + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    if args.resume_logs:
+        logs_folder = args.resume_logs
+        if not os.path.isabs(logs_folder):
+            logs_folder = os.path.join(script_dir, logs_folder)
+        if not os.path.isdir(logs_folder):
+            raise FileNotFoundError(f"Resume logs folder not found: {logs_folder}")
     else:
-        logs_folder = os.path.join(script_dir, 'logs/', "hyperopt_" + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    os.makedirs(logs_folder, exist_ok=True)  # Ensure logs folder exists
+        if args.name:
+            logs_folder = os.path.join(script_dir, 'logs/',
+                                       "hyperopt_" + args.name + "_" + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        else:
+            logs_folder = os.path.join(script_dir, 'logs/', "hyperopt_" + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        os.makedirs(logs_folder, exist_ok=True)  # Ensure logs folder exists
     envs_folder = os.path.join(logs_folder, 'envs')
 
     logger = setup_logging(logs_folder, log_to_file=args.save_log_file)
@@ -185,6 +195,10 @@ if __name__ == "__main__":
             config['pca_components'] = config['default_vulnerability_embeddings_size']
         else:
             config['pca_components'] = args.pca_components
+
+    # Decide device once per run; stored as string to keep YAML serialization simple
+    if 'device' not in config:
+        config['device'] = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Load hyperopt ranges
     hyperparams_ranges = load_yaml(args.hyperparams_ranges_file)

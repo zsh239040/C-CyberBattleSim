@@ -24,6 +24,7 @@ import torch
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.logger import Logger, HumanOutputFormat, CSVOutputFormat, TensorBoardOutputFormat
 import re
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, project_root)
@@ -87,7 +88,7 @@ def train_rl_algorithm(logs_folder, envs_folder, config, train_ids, val_ids, met
 
 # Function used to train the model based on the configuration provided
 def train_model(train_envs, logs_folder, config, run_id, val_envs=None, logger=None, verbose=1):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
     if verbose:
         logger.info(f"Training on device: {device}")
 
@@ -145,6 +146,17 @@ def train_model(train_envs, logs_folder, config, run_id, val_envs=None, logger=N
             model = model_class("MultiInputPolicy", train_envs, policy_kwargs=config['policy_kwargs'],
                                     learning_rate=learning_rate,
                                     tensorboard_log=logs_folder, **algorithm_config, verbose=verbose, device=device)
+
+    # SB3 logger: send progress tables to stdout + app.log + CSV (+ tensorboard already configured via tensorboard_log)
+    app_log_path = os.path.join(logs_folder, "app.log")
+    output_formats = [
+        HumanOutputFormat(sys.stdout),
+        HumanOutputFormat(open(app_log_path, "a")),
+        CSVOutputFormat(os.path.join(logs_folder, "progress.csv")),
+        TensorBoardOutputFormat(logs_folder)
+    ]
+    sb3_logger = Logger(logs_folder, output_formats)
+    model.set_logger(sb3_logger)
 
     # Checkpoint periodic saving
     checkpoint_callback = CheckpointCallback(save_freq=config['checkpoints_save_freq'],
@@ -247,6 +259,9 @@ def setup_train_via_args(args, logs_folder=None, envs_folder=None):
     config.update({"seeds_runs": seeds_runs})
     set_seeds(seeds_runs[0]) # do it before initial setting steps
 
+    # Decide device once and propagate
+    config['device'] = "cuda" if torch.cuda.is_available() else "cpu"
+
     def get_base_path(base_dir):
         subdirs = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
         run_dirs = sorted([d for d in subdirs if re.match(r'run_\d+', d)])
@@ -305,9 +320,11 @@ def setup_train_via_args(args, logs_folder=None, envs_folder=None):
     config['edge_feature_aggregations'] = config_encoder['edge_feature_aggregations']
 
     # Load the graph encoder model
+    device = config['device']
     graph_encoder = GAEEncoder(config_encoder['node_feature_vector_size'], config_encoder['model_config']['layers'],
                                config_encoder['edge_feature_vector_size'])
-    graph_encoder.load_state_dict(torch.load(str(graph_encoder_path)))
+    graph_encoder.load_state_dict(torch.load(str(graph_encoder_path), map_location=device))
+    graph_encoder = graph_encoder.to(device)
     graph_encoder.eval()
 
     config.update({"graph_encoder_path": graph_encoder_path})
@@ -425,16 +442,16 @@ if __name__ == "__main__":
     parser.add_argument('--algorithm', type=str, choices=['ppo', 'a2c', 'rppo', 'trpo', 'ddpg', 'sac', 'td3', 'tqc'], default='trpo', help='RL algorithm to train')
     parser.add_argument('--environment_type', type=str, choices=['continuous', 'global', 'local'], default='continuous', help='Type of environment to be used for training') # to be extended in the future to LOCAL or DISCRETE or others
     parser.add_argument('--num_runs', type=int, default=1, help='Number of runs')
-    parser.add_argument('-nlp', '--nlp_extractor', type=str, choices=["bert", "distilbert", "roberta", "gpt2", "CySecBERT", "SecureBERT", "SecBERT", "SecRoBERTa"], default="bert", help='NLP extractor to be used for extracting vulnerability embeddings')
-    parser.add_argument('--holdout', action='store_true', default=False, help='Use holdout strategy and periodically evaluate on validation sets')
+    parser.add_argument('-nlp', '--nlp_extractor', type=str, choices=["bert", "distilbert", "roberta", "gpt2", "CySecBERT", "SecureBERT", "SecBERT", "SecRoBERTa"], default="CySecBERT", help='NLP extractor to be used for extracting vulnerability embeddings')
+    parser.add_argument('--holdout', action='store_true', default=True, help='Use holdout strategy and periodically evaluate on validation sets')
     parser.add_argument('--finetune_model', type=str, help='Path to the model to eventually finetune (relative to the logs folder)')
-    parser.add_argument('--early_stopping', type=int, default=0, help='Early stopping on the validation environments setting the number of patience runs')
+    parser.add_argument('--early_stopping', type=int, default=5, help='Early stopping on the validation environments setting the number of patience runs')
     parser.add_argument('-g','--goal', type=str,  default="control", choices=["control", "discovery", "disruption", "control_node", "discovery_node", "disruption_node"], help='Goal (threat model) of the agent')
     parser.add_argument('--yaml', default=False, help='Read configuration file from YAML file of a previous training')
-    parser.add_argument('--name', default=False, help='Name of the logs folder related to the run')
-    parser.add_argument('--load_envs', default=False, help='Path of the envs folder where the networks should be processed and loaded from')
+    parser.add_argument('--name', default="ALGO", help='Name of the logs folder related to the run')
+    parser.add_argument('--load_envs', default="syntethic_deployment_20_graphs_100_nodes", help='Path of the envs folder where the networks should be processed and loaded from')
     parser.add_argument('--load_processed_envs', default=False, help='Path of the run folder where the envs already processed should be loaded from')
-    parser.add_argument('--static_seeds', action='store_true', default=False, help='Use a static seed for training')
+    parser.add_argument('--static_seeds', action='store_true', default=True, help='Use a static seed for training')
     parser.add_argument('--load_seeds', default="config", help='Path of the folder where the seeds.yaml should be loaded from (e.g. previous experiment)')
     parser.add_argument('--random_seeds', action='store_true', default=False, help='Use random seeds for training')
     parser.add_argument('--static_defender_agent', default=None, choices=['reimage', 'events', None], help='Static defender agent to use')

@@ -74,6 +74,8 @@ def init_model(sample_env, config):
     config['node_feature_vector_size'] = sample_env.node_feature_vector_size
     config['edge_feature_vector_size'] = sample_env.edge_feature_vector_size
     model = GAE(config['node_feature_vector_size'], config['model_config']['layers'], config['edge_feature_vector_size'], config['binary_indices'], config['multi_class_info'], config['continuous_indices'])
+    device = torch.device(config['device'])
+    model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config['learning_rate'])
     return model, optimizer, config
 
@@ -95,6 +97,7 @@ def setup_holdout(config, envs_folder, logs_folder):
 
 # Training and evaluation function for the model
 def train_and_eval(config, train_envs, val_envs, model, optimizer, writer, logger):
+    device = torch.device(config['device'])
     batch = []
     done = True
     total_loss = None
@@ -115,6 +118,7 @@ def train_and_eval(config, train_envs, val_envs, model, optimizer, writer, logge
             batch_loader = DataLoader(batch, batch_size=config['batch_size'], shuffle=True)
 
             for batch_data in batch_loader:  # type: ignore
+                batch_data = batch_data.to(device)
                 total_loss, adj_loss, feature_loss, edge_feature_loss, diversity_loss, binary_cat_loss, multi_cat_loss, cont_loss = compute_backward_batch_train_loss(
                     model, batch_data, optimizer, **config)
                 if total_loss is None:
@@ -194,6 +198,8 @@ def execute_runs(config, original_logs_folder, envs_folder, nlp_extractor, logge
     return np.mean(scores)
 
 def main(config, logs_folder, envs_folder, logger):
+    if 'device' not in config:
+        config['device'] = 'cuda' if torch.cuda.is_available() else 'cpu'
     scores_nlps = []
     # For every NLP extractor, train the model and take the mean performance
     for nlp_extractor in config['nlp_extractors']:
@@ -217,15 +223,15 @@ def main(config, logs_folder, envs_folder, logger):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train a GNN Autoencoder')
     parser.add_argument('--train_config', type=str, default=os.path.join('config', 'train_config.yaml'), help='Path to the configuration YAML file')
-    parser.add_argument('--name', default=False, help='Name of the logs folder related to the run')
+    parser.add_argument('--name', default="GAE", help='Name of the logs folder related to the run')
     parser.add_argument('--static_seeds', action='store_true', default=False, help='Use a static seed for training')
     parser.add_argument('--load_seeds', default="config",
                         help='Path of the folder where the seeds.yaml should be loaded from (e.g. previous experiment)')
     parser.add_argument('--random_seeds', action='store_true', default=False, help='Use random seeds for training')
     parser.add_argument('--yaml', default=False, help='Read configuration file from YAML file of a previous training')
     parser.add_argument('--num_runs', type=int, default=1, help='Number of runs to perform')
-    parser.add_argument('--holdout', default=False, action="store_true", help='Switch between graphs')
-    parser.add_argument('--load_envs', default=False, type=str, help='Path to the .pkl file containing the graph')
+    parser.add_argument('--holdout', default=True, action="store_true", help='Switch between graphs')
+    parser.add_argument('--load_envs', default="syntethic_deployment_20_graphs_100_nodes", type=str, help='Path to the .pkl file containing the graph')
     parser.add_argument('--no_save_log_file', action='store_false', dest='save_log_file',
                         default=True, help='Disable logging to file; log only to terminal')
     parser.add_argument('-v', '--verbose', default=2, type=int, help='Verbose level: 0 - no output, 1 - training/validation information, 2 - episode level information, 3 - iteration level information')
@@ -263,7 +269,10 @@ if __name__ == "__main__":
     else: # args.load_seeds:
         if args.verbose:
             logger.info("Loading seeds from seeds file %s", args.load_seeds)
-        seeds_loaded = load_yaml(os.path.join(args.load_seeds, 'seeds.yaml'))
+        seeds_base = args.load_seeds
+        if not os.path.isabs(seeds_base):
+            seeds_base = os.path.join(script_dir, seeds_base)
+        seeds_loaded = load_yaml(os.path.join(seeds_base, 'seeds.yaml'))
         seeds_runs = seeds_loaded['seeds'][:args.num_runs]
 
     if args.yaml:

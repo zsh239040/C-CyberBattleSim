@@ -68,9 +68,9 @@ def compute_loss(model, data, binary_indices, multi_class_info, continuous_indic
     for idx, num_classes in multi_class_info.items():
         logits = reconstructed_x[:, offset:offset + num_classes]
         if idx == "privilege level":
-            ground_truth = convert_privilege_to_indices(data.x[:, offset_ground_truth])
+            ground_truth = convert_privilege_to_indices(data.x[:, offset_ground_truth]).to(data.x.device)
         elif idx == "status":
-            ground_truth = convert_status_to_indices(data.x[:, offset_ground_truth])
+            ground_truth = convert_status_to_indices(data.x[:, offset_ground_truth]).to(data.x.device)
         else:
             ground_truth = data.x[:, offset_ground_truth].long()
         multi_cat_loss += F.cross_entropy(logits, ground_truth)
@@ -103,6 +103,7 @@ def compute_loss(model, data, binary_indices, multi_class_info, continuous_indic
 
 # Validation function: periodically use and switch the validation set of graphs
 def validate(model, val_env, writer, config, starting_epoch):
+    device = torch.device(config['device'])
     model.eval()  # Set the model to evaluation mode
     total_val_loss = 0
     total_adj_loss = 0
@@ -131,6 +132,7 @@ def validate(model, val_env, writer, config, starting_epoch):
             batch_loader = DataLoader(batch, batch_size=config['batch_size'], shuffle=True)
             # turn batch loader into iterable so that I can do for loop in it
             for batch_data in batch_loader:  # type: ignore
+                batch_data = batch_data.to(device)
                 with torch.no_grad():  # No gradients needed for validation step
                     total_loss, adj_loss, feature_loss, edge_feature_loss, div_loss, binary_cat_loss, multi_cat_loss, cont_loss = compute_loss(model, batch_data, **config)
                     total_val_loss += total_loss.item()

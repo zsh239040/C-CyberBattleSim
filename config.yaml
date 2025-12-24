@@ -7,9 +7,9 @@ gae_url: "https://www.dropbox.com/scl/fi/80t02bvzh65ixrqnaw6yz/gae.zip?rlkey=rwb
 default_environments_url: "https://www.dropbox.com/scl/fi/mpuljepg840wxhge46cjh/scenarios.zip?rlkey=gtc2n1f4i4kjv7qfvabta7gej&st=hnv1cho9&dl=1"
 
 # Internal paths used to identify main components
-vulnerability_classifier_path: "classifier" # relative to cyberbattle/models
-nvd_data_path: "default_data" # relative to cyberbattle/data/scrape_samples
-gae_path: "default" # relative to cyberbattle/gae/logs
+vulnerability_classifier_path: "classifier"
+nvd_data_path: "default_data"
+gae_path: "GAE_2025-12-23_14-11-38"
 #gae_dimensionality_reduction_path: # paths of GAE models trained on spaces with dimensionality reduction applied
 #  10: "num_components=10" # relative to cyberbattle/gae/logs (optional)
-default_environments_path: "default"
+default_environments_path: "syntethic_deployment_20_graphs_100_nodes"

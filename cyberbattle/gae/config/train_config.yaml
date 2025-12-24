@@ -6,10 +6,10 @@ model_config: # default NN architecture, not used during hyper-parameters optimi
     - type: 'NNConv'
       NN_channels: 16
       out_channels: 64
-      activation: 'null'
+      activation: 'ReLU'
     - type: 'GCNConv'
       out_channels: 64
-      activation: 'null'
+      activation: 'ReLU'
 
 learning_rate: 0.01
 batch_size: 32

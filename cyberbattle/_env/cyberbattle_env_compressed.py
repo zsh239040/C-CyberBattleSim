@@ -249,15 +249,17 @@ class CyberBattleCompressedEnv(CyberBattleEnv):
     def encode(self, graph):
         # Use the GAE Encoder to encode the graph
         node_embeddings = {}
+        device = next(self.graph_encoder.parameters()).device
         if self.goal.endswith("node"): # node-specific goal game
             graph = copy.deepcopy(graph) # if goal node is not in the graph, add it in order to have a pure node embedding without mixing with the graph neighbors
             if self.interest_node not in graph.nodes():
                 self.add_node_evolving_visible_graph(self.interest_node)
         data = from_networkx(graph)
         if 'vulnerabilities_embeddings' not in data: # case where the graph has no edges
-            data.vulnerabilities_embeddings = torch.zeros(self.vulnerability_embeddings_dimensions, dtype=torch.float32)
-        data.x = data.x.float()
-        data.vulnerabilities_embeddings = data.vulnerabilities_embeddings.float()
+            data.vulnerabilities_embeddings = torch.zeros(self.vulnerability_embeddings_dimensions, dtype=torch.float32, device=device)
+        data.x = data.x.float().to(device)
+        data.vulnerabilities_embeddings = data.vulnerabilities_embeddings.float().to(device)
+        data = data.to(device)
 
         z = self.graph_encoder(data.x, data.edge_index, data.vulnerabilities_embeddings)
 
@@ -274,7 +276,7 @@ class CyberBattleCompressedEnv(CyberBattleEnv):
         # Get the embeddings for the running nodes
         for node in running_nodes:
             node_index = list(graph.nodes()).index(node)
-            node_embedding = z[node_index].detach().numpy()
+            node_embedding = z[node_index].detach().cpu().numpy()
             node_embeddings[node] = node_embedding
 
         embeddings_array = np.array([node_embeddings[node] for node in node_embeddings], dtype=np.float32)

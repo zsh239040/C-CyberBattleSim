@@ -13,7 +13,8 @@ cp "$YAML_FILE" "$TMP_FILE"
 download_file() {
     local url=$1
     local output_path=$2
-    wget -O "$output_path" "$url"
+    mkdir -p "$(dirname "$output_path")"
+    wget --continue -O "$output_path" "$url"
 }
 
 # Function to download and extract a ZIP file
@@ -23,13 +24,41 @@ download_and_extract_zip() {
     local output_dir=$3
 
     # Download the ZIP file
-    download_file "$url" "$output_zip"
+    if ! download_file "$url" "$output_zip"; then
+        echo "Failed to download $url"
+        return 1
+    fi
+
+    if [ ! -s "$output_zip" ]; then
+        echo "Downloaded file is empty: $output_zip"
+        return 1
+    fi
 
     # Create the output directory if it doesn't exist
     mkdir -p "$output_dir"
 
     # Extract the ZIP file
-    unzip -o "$output_zip" -d "$output_dir"
+    if command -v unzip >/dev/null 2>&1; then
+        if ! unzip -o "$output_zip" -d "$output_dir"; then
+            echo "Failed to extract $output_zip with unzip"
+            return 1
+        fi
+    else
+        if ! python - "$output_zip" "$output_dir" <<'PY'
+import sys
+import zipfile
+
+zip_path = sys.argv[1]
+out_dir = sys.argv[2]
+
+with zipfile.ZipFile(zip_path) as zf:
+    zf.extractall(out_dir)
+PY
+        then
+            echo "Failed to extract $output_zip with python"
+            return 1
+        fi
+    fi
 
     # Remove the ZIP file after extraction
     rm "$output_zip"
@@ -71,6 +100,7 @@ prompt_download_zip() {
 mkdir -p "$SCRIPT_DIR/cyberbattle/models/classifier"
 mkdir -p "$SCRIPT_DIR/cyberbattle/data/scrape_samples/"
 mkdir -p "$SCRIPT_DIR/cyberbattle/data/env_samples/"
+mkdir -p "$SCRIPT_DIR/cyberbattle/gae/logs"
 
 # Read URLs from the YAML file and download each file if needed, and place in the right directory
 
