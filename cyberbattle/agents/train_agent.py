@@ -42,6 +42,12 @@ from cyberbattle.utils.log_utils import setup_logging # noqa: E402
 torch.set_default_dtype(torch.float32)
 script_dir = os.path.dirname(__file__)
 
+# Resolve the TensorBoard run directory to match SB3 logging output.
+def _get_tensorboard_dir(logs_folder, algorithm, run_id):
+    if algorithm != "rppo":
+        return os.path.join(logs_folder, f"{algorithm.upper()}_{run_id}")
+    return os.path.join(logs_folder, f"RecurrentPPO_{run_id}")
+
 # Handles the training for different runs of the algorithm and extraction of average metric values
 def train_rl_algorithm(logs_folder, envs_folder, config, train_ids, val_ids, metric_name=None, logger=None, verbose=1):
     metric_values = []
@@ -71,10 +77,7 @@ def train_rl_algorithm(logs_folder, envs_folder, config, train_ids, val_ids, met
 
         # extract metric data (used by hyperopt to determine best hyperparameters based on their score)
         if metric_name:
-            if config['algorithm'] != "rppo": # handling name difference in case of recurrent PPO
-                tensorboard_dir = os.path.join(logs_folder, config['algorithm'].upper() + "_" + str(run_id + 1))
-            else:
-                tensorboard_dir = os.path.join(logs_folder, "RecurrentPPO_" + str(run_id + 1))
+            tensorboard_dir = _get_tensorboard_dir(logs_folder, config['algorithm'], run_id + 1)
             # determine the evolution of curves
             times, values = extract_metric_data(tensorboard_dir, metric_name)
             auc = calculate_auc(times, values) # AUC normalized to starting value in order to normalize to initial random performances
@@ -149,11 +152,13 @@ def train_model(train_envs, logs_folder, config, run_id, val_envs=None, logger=N
 
     # SB3 logger: send progress tables to stdout + app.log + CSV (+ tensorboard already configured via tensorboard_log)
     app_log_path = os.path.join(logs_folder, "app.log")
+    tensorboard_dir = _get_tensorboard_dir(logs_folder, config['algorithm'], run_id)
+    os.makedirs(tensorboard_dir, exist_ok=True)
     output_formats = [
         HumanOutputFormat(sys.stdout),
         HumanOutputFormat(open(app_log_path, "a")),
         CSVOutputFormat(os.path.join(logs_folder, "progress.csv")),
-        TensorBoardOutputFormat(logs_folder)
+        TensorBoardOutputFormat(tensorboard_dir)
     ]
     sb3_logger = Logger(logs_folder, output_formats)
     model.set_logger(sb3_logger)
