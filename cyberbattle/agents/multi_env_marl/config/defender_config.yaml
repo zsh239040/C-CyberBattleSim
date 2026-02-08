@@ -1,0 +1,59 @@
+# Defender defaults for multi-agent training
+
+defender_algorithm: ppo
+defender_policy: factorized_node_attention
+
+defender_maintain_sla: 0.60
+
+defender_invalid_action_reward: -50.0
+
+defender_loss_reward: -5000.0
+
+defender_reset_on_constraint_broken: false
+
+defender_max_timesteps: 200
+
+defender_sla_worsening_penalty_scale: 200.0
+
+# Shaping terms (set to 0 to disable)
+defender_availability_delta_scale: 1000.0
+defender_owned_ratio_delta_scale: 2000.0
+
+# Attacker reward component (all | defender_only)
+defender_attacker_reward_mode: defender_only
+defender_attacker_reward_scale: 1.0
+
+# Limit of per-node services in defender actions (MARLon default = 3)
+defender_service_action_limit: 3
+
+# Limit number of firewall ports considered (top-K by vulnerability frequency). Null/0 for all.
+defender_firewall_rule_limit: 0
+# Source for firewall ports (vulnerabilities | services | both)
+defender_firewall_rule_source: services
+# Minimum occurrences to include a port in the firewall rule list
+defender_firewall_rule_min_support: 2
+
+# Let defender act before attacker each step (can improve early blocking)
+defender_act_first: false
+
+# Dynamic candidate sets (attack-neighborhood based)
+defender_candidate_k_hop: 1
+defender_candidate_random_nodes: 2
+defender_candidate_high_risk_nodes: 2
+defender_candidate_include_attack_target: true
+defender_candidate_include_owned_neighbors: true
+
+# Candidate mask behavior in factorized policy (soft | hard)
+defender_candidate_mask_mode: soft
+defender_node_prior_strength: 2.0
+defender_port_prior_strength: 1.5
+defender_service_prior_strength: 1.0
+
+# Two-stage-like conditioning controls
+defender_condition_on_sampled_node: true
+defender_condition_on_action_node: true
+defender_canonical_node_index: 1
+defender_enforce_node_consistency: true
+
+# Reduce log volume for stability/perf
+defender_log_episode_summary: false

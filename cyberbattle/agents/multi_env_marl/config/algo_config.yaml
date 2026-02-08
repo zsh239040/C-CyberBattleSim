@@ -16,7 +16,7 @@ policy_kwargs:
 trpo:
   learning_rate_type: constant
   learning_rate: 0.0001
-  n_steps: 2048
+  n_steps: 1024
   batch_size: 128
   gamma: 0.95
   cg_max_steps: 15
@@ -24,7 +24,7 @@ trpo:
   line_search_shrinking_factor: 0.8
   line_search_max_iter: 10
   n_critic_updates: 10
-  gae_lambda: 0.85
+  gae_lambda: 0.9
   use_sde: False
   normalize_advantage: True
   target_kl: 0.01
