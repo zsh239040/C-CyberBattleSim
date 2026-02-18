@@ -1,0 +1,60 @@
+# Defender-specific algorithm hyperparameters and policy kwargs
+
+policy_kwargs:
+  net_arch: [128, 128]
+  activation_fn: ReLU
+  optimizer_class: Adam
+  optimizer_kwargs:
+    eps: 0.0000001
+    weight_decay: 0.0001
+    amsgrad: False
+
+ppo:
+  n_steps: 2048
+  ent_coef: 0.0
+  vf_coef: 0.5
+  learning_rate: 0.0001
+  learning_rate_type: constant
+  learning_rate_final: 0.0001
+  batch_size: 128
+  n_epochs: 4
+  gamma: 0.95
+  gae_lambda: 0.9
+  clip_range: 0.1
+  clip_range_vf: 0.2
+  normalize_advantage: True
+  max_grad_norm: 0.3
+  target_kl: 0.01
+
+trpo:
+  learning_rate_type: constant
+  learning_rate: 0.0003
+  n_steps: 1024
+  batch_size: 128
+  gamma: 0.99
+  cg_max_steps: 15
+  cg_damping: 0.1
+  line_search_shrinking_factor: 0.8
+  line_search_max_iter: 10
+  n_critic_updates: 10
+  gae_lambda: 0.9
+  use_sde: False
+  normalize_advantage: True
+  target_kl: 0.05
+  sub_sampling_factor: 1
+
+a2c:
+  learning_rate: 0.001
+  learning_rate_type: constant
+  learning_rate_final: 0.00001
+  gamma: 0.95
+  gae_lambda: 1
+  max_grad_norm: 0.3
+  rms_prop_eps: 0.00001
+  use_rms_prop: True
+  use_sde: False
+  sde_sample_freq: -1
+  normalize_advantage: True
+  n_steps: 20
+  ent_coef: 0.01
+  vf_coef: 1.0

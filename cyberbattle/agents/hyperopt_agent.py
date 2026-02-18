@@ -23,6 +23,42 @@ from cyberbattle.utils.log_utils import setup_logging # noqa: E402
 from cyberbattle.utils.file_utils import save_yaml # noqa: E402
 script_dir = os.path.dirname(__file__)
 
+def _find_latest_hyperopt_folder(base_dir, prefix):
+    if not os.path.isdir(base_dir):
+        return None
+    candidates = []
+    for entry in os.listdir(base_dir):
+        if entry.startswith(prefix):
+            path = os.path.join(base_dir, entry)
+            if os.path.isdir(path):
+                candidates.append(path)
+    if not candidates:
+        return None
+    return max(candidates, key=os.path.getmtime)
+
+
+def _resolve_hyperopt_logs_folder(args, base_dir):
+    if args.resume_from:
+        logs_folder = args.resume_from
+        if not os.path.isabs(logs_folder):
+            logs_folder = os.path.join(base_dir, "logs", logs_folder)
+        if not os.path.isdir(logs_folder):
+            raise ValueError(f"Resume folder does not exist: {logs_folder}")
+        return logs_folder, True
+    if args.resume_latest:
+        logs_root = os.path.join(base_dir, "logs")
+        prefix = f"hyperopt_{args.name}_" if args.name else "hyperopt_"
+        logs_folder = _find_latest_hyperopt_folder(logs_root, prefix)
+        if not logs_folder:
+            raise ValueError(f"No hyperopt logs found with prefix {prefix} in {logs_root}")
+        return logs_folder, True
+    if args.name:
+        logs_folder = os.path.join(base_dir, "logs",
+                                   "hyperopt_" + args.name + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    else:
+        logs_folder = os.path.join(base_dir, "logs", "hyperopt_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    return logs_folder, False
+
 map_name_to_sampler = {
     'grid': optuna.samplers.GridSampler,
     'random': optuna.samplers.RandomSampler,
@@ -138,14 +174,14 @@ if __name__ == "__main__":
                         help='Path of the folder where the seeds.yaml should be loaded from (e.g. previous experiment)')
     parser.add_argument('--random_seeds', action='store_true', default=False, help='Use random seeds for training')
     parser.add_argument('--num_runs', type=int, default=1, help='Number of runs')
-    parser.add_argument('--holdout', action='store_true', default=False,
+    parser.add_argument('--holdout', action='store_true', default=True,
                         help='Use validation and test sets and switch among environments periodically on the training and validation sets')
     parser.add_argument('--finetune_model', type=str,
                         help='Path to the model to eventually finetune (relative to the logs folder)')
     parser.add_argument('--early_stopping', type=int, default=0,
                         help='Early stopping on the validation environments setting the number of patience runs')
-    parser.add_argument('--name', default=False, help='Name of the logs folder related to the run')
-    parser.add_argument('--load_envs', default=False,
+    parser.add_argument('--name', default="ALGO", help='Name of the logs folder related to the run')
+    parser.add_argument('--load_envs', default="syntethic_deployment_20_graphs_100_nodes",
                         help='Path of the run folder where the networks should be loaded from')
     parser.add_argument('--load_processed_envs', default=False,
                         help='Path of the run folder where the envs already processed should be loaded from')
@@ -171,6 +207,10 @@ if __name__ == "__main__":
     parser.add_argument('--direction', type=str, default="maximize", choices=['maximize', 'minimize'],
                         help='Direction of the optimization (maximize or minimize)')
     parser.add_argument('--num_trials', type=int, default=25, help='Number of trials for hyperparameter optimization')
+    parser.add_argument('--resume_from', type=str, default=None,
+                        help='Path to an existing hyperopt logs folder to resume from (relative to logs/ or absolute)')
+    parser.add_argument('--resume_latest', action='store_true', default=False,
+                        help='Resume from the most recent hyperopt logs folder matching the run name')
     # Configuration files
     parser.add_argument('--train_config', type=str, default='config/train_config.yaml',
                         help='Path to the configuration YAML file')
@@ -179,6 +219,9 @@ if __name__ == "__main__":
     parser.add_argument('--algo_config', type=str, default='config/algo_config.yaml',
                         help='Path to the configuration YAML file')
     args = parser.parse_args()
+
+    if args.resume_from and args.resume_latest:
+        raise ValueError("Use only one of --resume_from or --resume_latest.")
 
     check_args(args)
 
@@ -189,13 +232,24 @@ if __name__ == "__main__":
     # read only those of the target algorithms
     hyperparams_ranges = hyperparams_ranges.get(args.algorithm, {})
 
-    if args.name:
-        logs_folder = os.path.join(script_dir, 'logs',
-                                   "hyperopt_" + args.name + "_" + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    else:
-        logs_folder = os.path.join(script_dir, 'logs', "hyperopt_" + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    logs_folder, resume_requested = _resolve_hyperopt_logs_folder(args, script_dir)
+
+    if resume_requested:
+        db_path = os.path.join(logs_folder, args.name + ".db")
+        if not os.path.exists(db_path):
+            db_files = [f for f in os.listdir(logs_folder) if f.endswith(".db")]
+            if len(db_files) == 1:
+                args.name = os.path.splitext(db_files[0])[0]
+                db_path = os.path.join(logs_folder, db_files[0])
+            else:
+                raise ValueError(
+                    "Resume requested but no study database found. "
+                    "Pass --name to match the existing .db or specify --resume_from correctly."
+                )
 
     logger = setup_logging(logs_folder, log_to_file=args.save_log_file)
+    if resume_requested:
+        logger.info("Resuming hyperopt run from %s", logs_folder)
 
     if not args.name:
         args.name = "hyperopt_" + args.algorithm

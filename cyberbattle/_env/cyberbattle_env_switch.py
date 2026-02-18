@@ -20,7 +20,9 @@ class RandomSwitchEnv(gymnasium.Env):
     # Decide for a current environment and wraps it accordingly, then switch to a new one every switch_interval episodes
     def __init__(self, envs_ids, switch_interval=50, envs_folder=None, envs_list=None,
                  save_to_csv=False, save_to_csv_interval=1,
-                 csv_folder=None, save_embeddings=True, verbose = 1):
+                 csv_folder=None, save_embeddings=True, verbose = 1,
+                 training_non_terminal_mode=False,
+                 training_disable_terminal_rewards=False):
         # two options are used, or ids of files and folder provided to load pkl file or list with the actual objects
         self.envs_ids = envs_ids
         self.envs_folder = envs_folder
@@ -29,6 +31,10 @@ class RandomSwitchEnv(gymnasium.Env):
         self.switch_interval = switch_interval
         self.steps_in_current_episode = 0
         self.verbose = verbose
+        self.training_non_terminal_mode = self._coerce_bool(training_non_terminal_mode, False)
+        self.training_disable_terminal_rewards = self._coerce_bool(
+            training_disable_terminal_rewards, self.training_non_terminal_mode
+        )
         self._switch_environment() # first initial environment selection and reset
         # represent a gym environment with the same action space and observation space of the ones in the list wrapped
         # should be gymnasium spaces
@@ -46,6 +52,16 @@ class RandomSwitchEnv(gymnasium.Env):
         self.num_envs = 1
         self.episode_start_time = time.time()
 
+    @staticmethod
+    def _coerce_bool(value, default=False):
+        if value is None:
+            return bool(default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return bool(value)
+
     def render(self, mode='human'):
         return self.current_env.render(mode)
 
@@ -59,16 +75,28 @@ class RandomSwitchEnv(gymnasium.Env):
         while True:
             if self.envs_list is not None: # if list with objects present
                 self.current_env = self.envs_list[self.current_env_index]
+                self._apply_training_overrides()
                 break
             else: # if ids and folder present
 
                 try:
                     with open(os.path.join(self.envs_folder, str(self.current_env_index) + ".pkl"), 'rb') as file:
                         self.current_env = pickle.load(file)
+                        self._apply_training_overrides()
                         break
                 except model.NoSuitableStarterNode: # if the environment is not suitable (does not have a node that respect the required criterias), switch to another one
                     if self.verbose:
                         self.current_env.logger.error("Error while loading environment")
+
+    def _apply_training_overrides(self):
+        if not hasattr(self, "current_env"):
+            return
+        setattr(self.current_env, "training_non_terminal_mode", bool(self.training_non_terminal_mode))
+        setattr(
+            self.current_env,
+            "training_disable_terminal_rewards",
+            bool(self.training_disable_terminal_rewards),
+        )
 
     # Switch to a random new environment among the list
     def _switch_environment(self):

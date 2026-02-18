@@ -3,7 +3,7 @@
 episode_iterations: 200 # cut-off considered regardless of K
 proportional_cutoff_coefficient: 1 # whether to use a cut-off proportional to the number of nodes (K) and of how much, or -1 if not
 winning_reward: 5000 # winning reward to add if the attacker goal is reached
-train_iterations: 30000 # number of training iterations
+train_iterations: 200000 # number of training iterations
 switch_interval: 5 # across the training set, in episodes
 absolute_reward: False # whether to have a reward = max(0, reward) of the original one
 losing_reward: -5000 # losing reward to add if the attacker has lost
@@ -24,7 +24,7 @@ graph_embeddings_aggregations: # aggregation functions for the node embeddings t
   - 'mean'
   - 'max'
   - 'min'
-checkpoints_save_freq: 10000 # frequency of checkpoints saving during training
+checkpoints_save_freq: 4096 # frequency of checkpoints saving during training
 
 sample_subset_samples: 100 # number of samples to sample per outcome if just a subset is considered
 remove_main_obstacles: True # whether to remove the main obstacles (e.g. DOS starter node)
@@ -51,3 +51,21 @@ test_ratio: 0.2
 val_switch_interval: 1 # in episodes, how frequently to switch the validation graphs in the set
 val_freq: 4096 # frequency of validation
 n_val_episodes: 5 # how many episodes to run overall every val_freq
+
+# Multi-environment settings
+num_parallel_envs: 2 # number of parallel training environments (capped to train set size)
+env_sampling_mode: "partitioned" # partitioned or random
+shuffle_train_envs: True # shuffle env IDs before partitioning
+max_train_envs: 8 # limit number of training envs (n); null for all
+vec_env_type: "dummy" # subproc or dummy
+subproc_start_method: "fork" # fork, spawn, or forkserver
+
+# MARL training-mode controls (training only)
+marl_non_terminal_training: true # disable attacker/defender game-over termination during training
+marl_disable_terminal_rewards: true # disable terminal win/loss reward overrides during training
+marl_non_terminal_max_timesteps: 0 # 0/null disables wrapper timeout truncation in non-terminal mode
+marl_deadlock_patience: 32 # technical reset when no progress persists this many steps
+marl_deadlock_reset_on_no_owned_running: true # count no-running-owned-node steps toward deadlock
+
+# Reduce log volume for stability/perf
+attacker_log_episode_summary: false

@@ -1,0 +1,224 @@
+# Defender defaults for multi-agent training
+# ------------------------------------------------------------
+# This file is written as:
+# 1) parameter meaning
+# 2) suggested range
+# 3) current tuned value
+# ------------------------------------------------------------
+
+# Defender policy/algorithm
+# defender_algorithm: {ppo,a2c,trpo,noop,random}; training uses this as defender learner mode.
+# Suggested: trpo/ppo for learning; noop/random for baseline only.
+defender_algorithm: ppo
+# defender_policy: policy architecture id.
+# Suggested: factorized_node_attention for current MultiDiscrete action design.
+defender_policy: factorized_node_attention
+
+# SLA and reward shaping core
+# defender_maintain_sla: SLA threshold below which loss penalty can trigger.
+# Range: [0,1], suggested [0.5,0.8].
+defender_maintain_sla: 0.60
+# defender_invalid_action_reward: penalty for invalid defender action.
+# Suggested range: [-200, 0]. More negative -> stronger avoidance of invalid actions.
+defender_invalid_action_reward: -50.0
+# defender_invalid_action_autocorrect:
+# If true, when policy outputs an invalid action, wrapper attempts a valid fallback
+# (prefer reimage on detected node), with a reduced penalty.
+defender_invalid_action_autocorrect: true
+# defender_invalid_action_autocorrect_penalty_scale in [0,1]:
+# effective penalty for corrected invalid action = invalid_action_reward * scale.
+# Suggested range: [0.05,0.5].
+defender_invalid_action_autocorrect_penalty_scale: 0.2
+# defender_loss_reward: penalty when SLA is first breached.
+# Suggested range: [-20000, -500].
+defender_loss_reward: -5000.0
+# defender_reset_on_constraint_broken: terminate episode on SLA breach.
+defender_reset_on_constraint_broken: false
+# defender_max_timesteps: defender-side hard timeout (episode step cap).
+# Suggested range: [50, 2000].
+defender_max_timesteps: 200
+# defender_sla_worsening_penalty_scale: penalty scale for further SLA degradation after breach.
+# Suggested range: [0, 1000].
+defender_sla_worsening_penalty_scale: 200.0
+
+# Shaping terms (set to 0 to disable)
+# defender_availability_delta_scale: reward += scale * (availability_t - availability_{t-1})
+# Suggested range: [0, 5000].
+defender_availability_delta_scale: 1000.0
+# defender_owned_ratio_delta_scale: reward += scale * (owned_ratio_{t-1} - owned_ratio_t)
+# Suggested range: [0, 5000].
+defender_owned_ratio_delta_scale: 2000.0
+# defender_active_intrusion_step_penalty >= 0:
+# extra per-step penalty when attacker still owns any node (owned_ratio>0).
+# Helps avoid long "stall without eviction" episodes in non-terminal training.
+# Suggested range: [2,20].
+defender_active_intrusion_step_penalty: 6
+
+# Attacker reward component (all | defender_only)
+# defender_attacker_reward_mode:
+# - all: defender always receives -attacker_reward
+# - defender_only: only for defender-relevant attacker outcomes
+defender_attacker_reward_mode: defender_only
+# defender_attacker_reward_scale: multiplier on attacker-derived component.
+# Suggested range: [0, 5].
+defender_attacker_reward_scale: 1.0
+
+# Action-space size controls
+# defender_service_action_limit: per-node max service slots exposed to action/observation.
+# Suggested range: [1, 16]. Higher -> larger action/obs space.
+defender_service_action_limit: 5
+
+# Firewall port dictionary construction
+# defender_firewall_rule_limit: keep top-K ports by frequency; 0 means no explicit K cap.
+# Suggested range: [0, 32]. Too high may enlarge branch dimension and slow training.
+defender_firewall_rule_limit: 0
+# defender_firewall_rule_source: source of port candidates {vulnerabilities,services,both}.
+# Suggested: services. both 效率极低
+defender_firewall_rule_source: services
+# defender_firewall_rule_min_support: minimum frequency to keep a port.
+# Suggested range: [1,5]. Too high may produce empty coverage.
+defender_firewall_rule_min_support: 5
+
+# Defender execution order
+# defender_act_first: if true, defender acts before attacker each joint step.
+defender_act_first: false
+
+# Candidate node/port/service set controls
+# candidate set narrows effective action choices without changing full action-space dimensions.
+# defender_candidate_k_hop: include neighbors up to K hops from owned nodes.
+# Suggested range: [0,4].
+defender_candidate_k_hop: 3
+# defender_candidate_random_nodes: add N random nodes to candidate set each step.
+# Suggested range: [0,10].
+defender_candidate_random_nodes: 2
+# defender_candidate_high_risk_nodes: add top-N risk nodes (vuln+service count based).
+# Suggested range: [0,10].
+defender_candidate_high_risk_nodes: 2
+# defender_candidate_include_attack_target: include detected attacked target node(s).
+defender_candidate_include_attack_target: true
+# defender_candidate_include_owned_neighbors: include owned nodes and K-hop neighbors.
+defender_candidate_include_owned_neighbors: true
+# defender_candidate_include_suspicious_nodes: include nodes whose suspicion >= threshold.
+defender_candidate_include_suspicious_nodes: false
+# defender_candidate_suspicion_threshold in [0,1].
+# Lower -> wider early containment; higher -> stricter focus.
+# Suggested range: [0.15,0.45].
+defender_candidate_suspicion_threshold: 0.30
+
+# Attack visibility model
+# defender_attack_detection_mode:
+# - perfect: defender directly knows latest attacked node (legacy full visibility)
+# - stochastic: defender gets probabilistic detection from suspicion dynamics (partial visibility)
+defender_attack_detection_mode: stochastic
+
+# ---------- Detection formulas (stochastic mode) ----------
+# Let s_i(t) be suspicion of node i at defender step t, age_i(t) be suspicion age.
+# 1) suspicion update on latest attack event at node i:
+#    s_i(t+1) = clip(decay * s_i(t) + bonus, 0, 1)
+#    bonus = success_bonus  (if attacker outcome is success-like)
+#          = failure_bonus  (if attacker outcome is blocked/failed-like)
+#
+# 2) detection probability per suspicious node:
+#    boost_i(t) = signal_gain * s_i(t) + age_gain * age_i(t)
+#    p_detect_i(t) = clip(base_prob * (1 + boost_i(t)),
+#                         0, max_prob)
+#    For current event, implementation injects immediate event evidence:
+#    s_i(t) <- clip(s_i(t) + event_bonus_scale * bonus, 0, 1)
+#    before sampling first-sighting detect prob.
+#
+# 3) if detected, visibility retention:
+#    detected signal remains for report_ttl steps (node and related port evidence)
+#
+# 4) background scan (built-in, stochastic mode only):
+#    each defender step probes at most one high-suspicion undetected node using p_detect_i(t).
+#    this reduces "early miss then never recover" long-tail episodes.
+#    if suspicion_age >= forced_age (>0), detection is forced for that node.
+#
+# 5) miss-streak upper bound (stochastic mode only):
+#    if a node has been observed in K consecutive attacker events without being detected,
+#    detection is forced on that node.
+#    K = defender_attack_detection_force_after_missed_events
+#      = ceil((1 - base_prob) * 10) + 1  (when config is null / auto)
+# ---------------------------------------------------------
+# Near-perfect visibility settings for ablation/debug comparison:
+# - defender_attack_detection_base_prob: 1.0
+# - defender_attack_detection_max_prob: 1.0
+# - defender_attack_detection_report_ttl: 1
+# - defender_candidate_include_suspicious_nodes: false
+
+# defender_attack_detection_base_prob in [0,1]: baseline detection chance.
+# Suggested range: [0.10,0.35].
+defender_attack_detection_base_prob: 0.6
+# defender_attack_detection_signal_gain >= 0: sensitivity to suspicion strength.
+# Suggested range: [0.40,1.20].
+defender_attack_detection_signal_gain: 0.60
+# defender_attack_detection_age_gain >= 0: temporal boost for unresolved suspicious nodes.
+# Suggested range: [0.03,0.20].
+defender_attack_detection_age_gain: 0.05
+# defender_attack_detection_decay in [0,1]: suspicion retention factor.
+# Suggested range: [0.94,0.995]. Higher means longer memory.
+defender_attack_detection_decay: 0.98
+# defender_attack_detection_success_bonus >= 0: suspicion increment on successful attacks.
+# Suggested range: [0.50,1.00].
+# Note: if (max_prob - base_prob) is small, raising success_bonus has weaker marginal effect
+# because p_detect gets capped quickly.
+defender_attack_detection_success_bonus: 0.9
+# defender_attack_detection_failure_bonus >= 0: suspicion increment on failed attacks.
+# Suggested range: [0.10,0.60].
+defender_attack_detection_failure_bonus: 0.15
+# defender_attack_detection_max_prob in [0,1]: upper cap for detection probability.
+# Suggested range: [0.80,1.00].
+# Effective sensitivity headroom = max_prob - base_prob.
+defender_attack_detection_max_prob: 0.95
+# defender_attack_detection_report_ttl >= 1 (int): detection persistence window.
+# Suggested range: [1,6].
+defender_attack_detection_report_ttl: 4
+# defender_attack_detection_event_bonus_scale >= 0:
+# Scales how much current event bonus influences immediate detection probability.
+# Suggested: null(auto=base_prob) or [0.1,1.0].
+defender_attack_detection_event_bonus_scale:
+# defender_attack_detection_forced_age >= 0 (int):
+# 0 disables forced detection; >0 forces detection when suspicion age reaches threshold.
+# Suggested range: [0,40].
+defender_attack_detection_forced_age: 24
+# defender_attack_detection_force_after_missed_events >= 1 (int):
+# Force-detect after K consecutive observed-but-undetected events on the same node.
+# null uses auto schedule K=ceil((1-base_prob)*10)+1.
+# Suggested range: [4,20] or null(auto).
+defender_attack_detection_force_after_missed_events:
+# defender_reimage_requires_detection:
+# - true: in stochastic mode, reimage is valid only on detected nodes (prevents blind reimage).
+# - false: allow blind reimage on any reimageable running node.
+defender_reimage_requires_detection: true
+# defender_reimage_auto_focus_detected_node:
+# - true: if policy selects REIMAGE on an undetected/wrong node, auto-redirect to current focus detected node.
+# - false: no auto-redirect; policy must pick detected node explicitly.
+# Suggested: false (keeps node-choice difficulty and preserves base_prob sensitivity).
+defender_reimage_auto_focus_detected_node: false
+# defender_blind_firewall_budget:
+# In stochastic mode, maximum count of block/allow actions targeting undetected nodes per episode.
+# null means unlimited (legacy behavior). Suggested range: [1,8].
+defender_blind_firewall_budget: 3
+# defender_prioritize_reimage_over_service_actions:
+# If true, when a detected reimageable node exists, STOP/START_SERVICE actions are treated as invalid.
+# This prevents policy collapse into service toggling and pushes faster attacker eviction.
+defender_prioritize_reimage_over_service_actions: false
+
+# Candidate-mask behavior in factorized policy (soft | hard)
+# soft: add bias to logits; hard: mask invalid candidates with -inf logits.
+defender_candidate_mask_mode: hard
+# Prior strengths used when candidate_mask_mode=soft.
+# Suggested ranges: node[0,5], port[0,5], service[0,5].
+defender_node_prior_strength: 2.0
+defender_port_prior_strength: 1.5
+defender_service_prior_strength: 1.0
+
+# Two-stage conditioning controls for factorized policy
+# If enabled, sampled/action node conditions downstream heads and can enforce node consistency.
+defender_condition_on_sampled_node: true
+defender_condition_on_action_node: true
+defender_canonical_node_index: 1
+defender_enforce_node_consistency: true
+
+# Reduce log volume for stability/perf
+defender_log_episode_summary: false
