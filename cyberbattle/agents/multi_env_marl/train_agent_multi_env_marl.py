@@ -60,6 +60,16 @@ script_dir = os.path.dirname(__file__)
 ON_POLICY_ALGOS = {"ppo", "a2c", "trpo"}
 
 
+def _as_bool(value, default=False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
 def _get_tensorboard_dir(logs_folder, algorithm, run_id):
     if algorithm != "rppo":
         return os.path.join(logs_folder, f"{algorithm.upper()}_{run_id}")
@@ -195,6 +205,10 @@ def _make_shared_env(rank, env_ids, envs_folder, csv_folder, config, seed, switc
             save_to_csv_interval=config["save_csv_file"],
             save_embeddings=config["save_embeddings_csv_file"],
             verbose=config["verbose"],
+            training_non_terminal_mode=_as_bool(config.get("marl_non_terminal_training", False)),
+            training_disable_terminal_rewards=_as_bool(
+                config.get("marl_disable_terminal_rewards", config.get("marl_non_terminal_training", False))
+            ),
         )
         if config["save_csv_file"]:
             env_csv_folder = os.path.join(csv_folder, f"env_{rank}")
@@ -302,6 +316,13 @@ def _build_vec_envs(logs_folder, envs_folder, config, train_ids, seed, defender_
         service_action_limit=service_action_limit,
         firewall_rule_min_support=firewall_rule_min_support,
     )
+    if not firewall_ports:
+        firewall_ports = list(DefenderEnvWrapper.firewall_rule_list)
+        if logger:
+            logger.warning(
+                "Defender firewall scan returned empty list; fallback to default ports %s.",
+                firewall_ports,
+            )
     defender_cfg["max_nodes"] = defender_cfg.get("max_nodes") or max_nodes
     defender_cfg["max_total_services"] = defender_cfg.get("max_total_services") or max_total_services
     defender_cfg["defender_firewall_rule_list"] = firewall_ports
@@ -329,24 +350,40 @@ def _build_vec_envs(logs_folder, envs_folder, config, train_ids, seed, defender_
 
     attacker_wrappers = []
     defender_wrappers = []
+    non_terminal_training = _as_bool(config.get("marl_non_terminal_training", False))
+    non_terminal_max_timesteps = config.get("marl_non_terminal_max_timesteps")
+    if non_terminal_max_timesteps in {0, "0", "", False}:
+        non_terminal_max_timesteps = None
+    elif non_terminal_max_timesteps is not None:
+        non_terminal_max_timesteps = int(non_terminal_max_timesteps)
+    attacker_max_timesteps = config.get("episode_iterations")
+    defender_max_timesteps = defender_cfg.get("defender_max_timesteps", config.get("episode_iterations", 200))
+    if non_terminal_training:
+        attacker_max_timesteps = non_terminal_max_timesteps
+        defender_max_timesteps = non_terminal_max_timesteps
+    deadlock_patience = int(config.get("marl_deadlock_patience", 0) or 0) if non_terminal_training else 0
+    deadlock_on_no_owned_running = (
+        _as_bool(config.get("marl_deadlock_reset_on_no_owned_running", False)) if non_terminal_training else False
+    )
     for idx, shared_env in enumerate(shared_envs):
         event_source = EnvironmentEventSource()
         attacker_log_summary = config.get("attacker_log_episode_summary", True)
-        if isinstance(attacker_log_summary, str):
-            attacker_log_summary = attacker_log_summary.strip().lower() in {"1", "true", "yes", "y"}
+        attacker_log_summary = _as_bool(attacker_log_summary, True)
         attacker_wrappers.append(
             AttackerEnvWrapper(
                 shared_env,
                 event_source=event_source,
-                max_timesteps=config.get("episode_iterations"),
+                max_timesteps=attacker_max_timesteps,
+                training_non_terminal_mode=non_terminal_training,
+                deadlock_patience=deadlock_patience,
+                deadlock_reset_on_no_owned_running=deadlock_on_no_owned_running,
                 log_episode_end=False,
                 log_episode_summary=bool(attacker_log_summary),
                 episode_log_prefix=f"[env={idx}]",
             )
         )
         defender_log_summary = defender_cfg.get("defender_log_episode_summary", True)
-        if isinstance(defender_log_summary, str):
-            defender_log_summary = defender_log_summary.strip().lower() in {"1", "true", "yes", "y"}
+        defender_log_summary = _as_bool(defender_log_summary, True)
         defender_wrappers.append(
             DefenderEnvWrapper(
                 shared_env,
@@ -356,14 +393,19 @@ def _build_vec_envs(logs_folder, envs_folder, config, train_ids, seed, defender_
                 max_total_services=defender_cfg["max_total_services"],
                 service_action_limit=defender_cfg.get("defender_service_action_limit", 3),
                 firewall_rule_list=defender_cfg.get("defender_firewall_rule_list"),
-                max_timesteps=defender_cfg.get("defender_max_timesteps", config.get("episode_iterations", 200)),
+                max_timesteps=defender_max_timesteps,
                 invalid_action_reward=defender_cfg.get("defender_invalid_action_reward", 0),
+                invalid_action_autocorrect=defender_cfg.get("defender_invalid_action_autocorrect", True),
+                invalid_action_autocorrect_penalty_scale=defender_cfg.get(
+                    "defender_invalid_action_autocorrect_penalty_scale", 0.2
+                ),
                 reset_on_constraint_broken=defender_cfg.get("defender_reset_on_constraint_broken", False),
                 loss_reward=defender_cfg.get("defender_loss_reward", -5000.0),
                 defender_maintain_sla=defender_cfg.get("defender_maintain_sla", 0.6),
                 sla_worsening_penalty_scale=defender_cfg.get("defender_sla_worsening_penalty_scale", 200.0),
                 availability_delta_scale=defender_cfg.get("defender_availability_delta_scale", 0.0),
                 owned_ratio_delta_scale=defender_cfg.get("defender_owned_ratio_delta_scale", 0.0),
+                active_intrusion_step_penalty=defender_cfg.get("defender_active_intrusion_step_penalty", 10.0),
                 attacker_reward_mode=defender_cfg.get("defender_attacker_reward_mode", "all"),
                 attacker_reward_scale=defender_cfg.get("defender_attacker_reward_scale", 1.0),
                 candidate_k_hop=defender_cfg.get("defender_candidate_k_hop", 1),
@@ -371,6 +413,30 @@ def _build_vec_envs(logs_folder, envs_folder, config, train_ids, seed, defender_
                 candidate_high_risk_nodes=defender_cfg.get("defender_candidate_high_risk_nodes", 0),
                 candidate_include_attack_target=defender_cfg.get("defender_candidate_include_attack_target", True),
                 candidate_include_owned_neighbors=defender_cfg.get("defender_candidate_include_owned_neighbors", True),
+                candidate_include_suspicious_nodes=defender_cfg.get("defender_candidate_include_suspicious_nodes", False),
+                candidate_suspicion_threshold=defender_cfg.get("defender_candidate_suspicion_threshold", 0.35),
+                attack_detection_mode=defender_cfg.get("defender_attack_detection_mode", "perfect"),
+                attack_detection_base_prob=defender_cfg.get("defender_attack_detection_base_prob", 0.0),
+                attack_detection_signal_gain=defender_cfg.get("defender_attack_detection_signal_gain", 0.0),
+                attack_detection_age_gain=defender_cfg.get("defender_attack_detection_age_gain", 0.0),
+                attack_detection_decay=defender_cfg.get("defender_attack_detection_decay", 1.0),
+                attack_detection_success_bonus=defender_cfg.get("defender_attack_detection_success_bonus", 1.0),
+                attack_detection_failure_bonus=defender_cfg.get("defender_attack_detection_failure_bonus", 1.0),
+                attack_detection_max_prob=defender_cfg.get("defender_attack_detection_max_prob", 1.0),
+                attack_detection_report_ttl=defender_cfg.get("defender_attack_detection_report_ttl", 1),
+                attack_detection_event_bonus_scale=defender_cfg.get("defender_attack_detection_event_bonus_scale"),
+                attack_detection_forced_age=defender_cfg.get("defender_attack_detection_forced_age", 0),
+                attack_detection_force_after_missed_events=defender_cfg.get(
+                    "defender_attack_detection_force_after_missed_events"
+                ),
+                reimage_requires_detection=defender_cfg.get("defender_reimage_requires_detection"),
+                reimage_auto_focus_detected_node=defender_cfg.get(
+                    "defender_reimage_auto_focus_detected_node", False
+                ),
+                blind_firewall_budget=defender_cfg.get("defender_blind_firewall_budget"),
+                prioritize_reimage_over_service_actions=defender_cfg.get(
+                    "defender_prioritize_reimage_over_service_actions", True
+                ),
                 log_episode_end=False,
                 log_episode_summary=bool(defender_log_summary),
                 episode_log_prefix=f"[env={idx}]",
@@ -501,6 +567,13 @@ def train_multiagent(
         attacker_envs, defender_envs = _build_vec_envs(
             logs_folder, envs_folder, config, train_ids, seed, defender_cfg, logger=logger
         )
+        # Persist runtime-expanded defender config (notably firewall_rule_list) so
+        # evaluation can reuse exactly the same action-space semantics as training.
+        try:
+            save_yaml(defender_cfg, logs_folder, "defender_config.yaml")
+        except Exception as exc:
+            if logger:
+                logger.warning("Failed to refresh runtime defender_config.yaml: %s", str(exc))
 
         attacker_cfg = config["algorithm_hyperparams"]
         defender_algo = defender_cfg.get("defender_algorithm", config["algorithm"])

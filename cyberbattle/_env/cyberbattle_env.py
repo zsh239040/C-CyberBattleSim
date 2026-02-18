@@ -85,6 +85,23 @@ class CyberBattleEnv(gym.Env):
         self.done = False
         self.num_nodes = len(self.__initial_environment.network.nodes)
         self.episode_id = 0
+        # Training-only control flags used by MARL wrappers.
+        def _coerce_bool(value, default=False):
+            if value is None:
+                return bool(default)
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+            return bool(value)
+
+        self.training_non_terminal_mode = _coerce_bool(
+            kwargs.get("training_non_terminal_mode", False), default=False
+        )
+        self.training_disable_terminal_rewards = _coerce_bool(
+            kwargs.get("training_disable_terminal_rewards", self.training_non_terminal_mode),
+            default=self.training_non_terminal_mode,
+        )
 
         # in case of an experiment targeting a specific node, switch periodically
         if self.switch_interest_node_interval and self.goal.lower().endswith("node"):
@@ -320,20 +337,26 @@ class CyberBattleEnv(gym.Env):
         # Check whether there has been some ending conditions
         self.end_episode_reason = 0
         self.truncated = False
-        if not self.done:
+        training_non_terminal_mode = bool(getattr(self, "training_non_terminal_mode", False))
+        disable_terminal_rewards = bool(
+            getattr(self, "training_disable_terminal_rewards", training_non_terminal_mode)
+        )
+        if not self.done and not training_non_terminal_mode:
             if self.attacker_goal_reached(): # attacker goal reached (vary per goal)
                 if self.verbose > 2:
                     self.logger.info("Attacker won the episode! Assigning winning reward %.1f..", self.winning_reward)
                 if self.goal == "disruption" or self.stop_at_goal_reached:
                     # in case of disruption we need to stop in any case, if it won it means it has killed them all
                     self.done = True
-                self.reward = self.winning_reward
+                if not disable_terminal_rewards:
+                    self.reward = self.winning_reward
                 self.end_episode_reason = 1  # attacker goal reached
             elif self.check_end_game(): # losing conditions depend also on the goal
                 if self.verbose > 2:
                     self.logger.info("Game lost due to end game condition reached! Assigning losing reward %.1f..", self.losing_reward)
                 self.done = True
-                self.reward = self.losing_reward
+                if not disable_terminal_rewards:
+                    self.reward = self.losing_reward
                 self.end_episode_reason = 2  # lost game
             elif self.proportional_cutoff_coefficient and self.proportional_cutoff_reached(): # cut-off proportional to the number of nodes
                 if self.verbose > 2:
@@ -345,6 +368,11 @@ class CyberBattleEnv(gym.Env):
                     self.logger.info("Episode iterations limit %d reached, stopping the episode..", self.episode_iterations)
                 self.truncated = True
                 self.end_episode_reason = 3
+        elif training_non_terminal_mode:
+            # Keep MARL training continuous; wrappers will handle technical resets.
+            self.done = False
+            self.truncated = False
+            self.end_episode_reason = 0
 
         self.check_end_time += time.time() - start_time
 

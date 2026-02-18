@@ -1,0 +1,270 @@
+## 第2章 攻防环境形式化建模与任务定义
+
+### 2.1 多关系网络拓扑与节点-漏洞联合表示
+本文将攻防场景建模为带多关系边的有向图
+\[
+\mathcal{G}=(\mathcal{V},\mathcal{E}^{K},\mathcal{E}^{A},\mathcal{E}^{D}),
+\]
+其中 \(\mathcal{V}\) 为主机节点集合，\(\mathcal{E}^{K}\)、\(\mathcal{E}^{A}\)、\(\mathcal{E}^{D}\) 分别表示侦察可达、控制可达与破坏可达关系。三类边并非抽象假设，而是由环境生成过程显式区分：侦察边由漏洞结果中的 `Reconnaissance` 触发；控制边由 `LateralMove`/`CredentialAccess` 触发；破坏边由 `DenialOfService` 触发，并同时满足端口监听与双向防火墙规则约束。由此，侦察扩展、权限扩张与服务破坏被解耦到不同可达子图，避免单一拓扑语义混叠。
+
+对任一节点 \(v\in\mathcal{V}\)，定义其状态向量为
+\[
+x_v^t=\big(m_v^t,\pi_v^t,\iota_v^t,\nu_v^t,\delta_v^t,\epsilon_v^t,\rho_v^t,\eta_v^t,\mathcal{S}_v,\mathcal{L}_v,\mathcal{F}_{v,\mathrm{in}}^t,\mathcal{F}_{v,\mathrm{out}}^t\big),
+\]
+其中 \(m_v^t\in\{\text{Running},\text{Stopped},\text{Imaging}\}\) 表示主机状态，\(\pi_v^t\) 为权限级别，\(\iota_v^t\) 表示是否被驻留控制，\(\nu_v^t\) 表示可见性，\(\delta_v^t,\epsilon_v^t\) 分别表示数据采集与外传状态，\(\rho_v^t,\eta_v^t\) 分别表示持久化与防御规避状态，\(\mathcal{S}_v\) 为服务集合，\(\mathcal{L}_v\) 为漏洞集合，\(\mathcal{F}_{v,\mathrm{in}}^t,\mathcal{F}_{v,\mathrm{out}}^t\) 为入/出站防火墙规则。
+
+漏洞 \(l\in\mathcal{L}_v\) 采用“结构化 CVSS + 语义结果集”建模：
+\[
+l=\big(\text{id},\text{port},\text{type},\text{req\_priv},\text{cvss},\text{rates},\mathcal{R}(l)\big),
+\]
+其中 \(\mathcal{R}(l)\) 为可触发结果集合（如侦察、提权、横移、采集、外传、拒绝服务等）。该表示直接支撑后续动作合法性约束与任务进展判定。
+
+基于 `docs/analyze_env_formalization.py` 对 20 个样本环境（每个 100 节点）的统计，三类边平均规模分别为 \(7235.6\)、\(7964.85\)、\(8291.2\)，对应平均有向密度为 \(0.7309\)、\(0.8045\)、\(0.8375\)。节点平均服务数为 \(2.22\)，平均漏洞数为 \(33.29\)，`has_data` 比例均值为 \(0.75\)，初始可见比例均值为 \(0.3095\)。漏洞实例平均数为 \(3329.4\)，其中 `NETWORK` 向量占主导；平均 CVSS 基础分为 \(6.35\)，平均利用成功率为 \(0.9676\)。这些统计结果说明本场景在可达关系、漏洞强度与资产语义上具有较高复杂度，可支撑后续策略学习与推理评估。
+
+### 2.2 攻防过程的状态转移与任务终止定义
+系统全局状态定义为
+\[
+s_t=\Big(\{x_v^t\}_{v\in\mathcal{V}},\mathcal{D}_t,\mathcal{O}_t,t\Big),
+\]
+其中 \(\mathcal{D}_t\subseteq\mathcal{V}\) 为已发现节点集合，\(\mathcal{O}_t\subseteq\mathcal{V}\) 为已控制节点集合。攻击者与防御者在时刻 \(t\) 分别执行 \(a_t^A\in\mathcal{A}^A\)、\(a_t^D\in\mathcal{A}^D\)，系统按
+\[
+s_{t+1}\sim \mathcal{T}(s_t,a_t^A,a_t^D,\xi_t)
+\]
+转移，其中 \(\xi_t\) 刻画漏洞成功率、检测触发与防御执行不确定性。
+
+攻击动作合法性由指示函数
+\[
+\chi(s_t,a_t^A)\in\{0,1\}
+\]
+约束。其核心判据包括：源节点已控制、目标节点已发现、源/目标主机处于 Running、漏洞存在且前置权限满足、结果类型与漏洞可触发结果一致、端口监听且防火墙允许通信。非法动作触发惩罚并不推进有效状态。状态更新的结构化形式可写为
+\[
+\mathcal{D}_{t+1}=\mathcal{D}_t\cup\Delta\mathcal{D}_t,\quad
+\mathcal{O}_{t+1}=\big(\mathcal{O}_t\cup\Delta\mathcal{O}_t\big)\setminus\mathcal{R}_t,
+\]
+其中 \(\Delta\mathcal{D}_t\) 由侦察结果产生，\(\Delta\mathcal{O}_t\) 由横移/凭证访问与提权产生，\(\mathcal{R}_t\) 表示重镜像导致的控制剥夺集合。
+
+为统一三类任务，定义
+\[
+g\in\{\mathrm{control},\mathrm{discovery},\mathrm{disruption}\}.
+\]
+设入口节点为 \(v_0\)，基于三类边的最短路可达性定义目标相关可达集
+\[
+\mathcal{V}_{\mathrm{ctl}}=\{v\neq v_0\mid \mathrm{dist}_{\mathcal{E}^{A}}(v_0,v)<\infty\},\ 
+\mathcal{V}_{\mathrm{dsc}}=\{v\neq v_0\mid \mathrm{dist}_{\mathcal{E}^{K}}(v_0,v)<\infty\},\ 
+\mathcal{V}_{\mathrm{dsr}}=\{v\neq v_0\mid \mathrm{dist}_{\mathcal{E}^{D}}(v_0,v)<\infty\}.
+\]
+对应目标达成条件分别为
+\[
+\mathcal{G}_{\mathrm{control}}:\left|\left\{v\in\mathcal{O}_t\setminus\{v_0\}\mid \pi_v^t=\mathrm{ROOT}\right\}\right|=|\mathcal{V}_{\mathrm{ctl}}|,
+\]
+\[
+\mathcal{G}_{\mathrm{discovery}}:\ |\mathcal{D}_t\setminus\{v_0\}|=|\mathcal{V}_{\mathrm{dsc}}|,\ \sum_{v\in\mathcal{D}_t}\mathbf{1}[\delta_v^t=1,\epsilon_v^t=0]=0,
+\]
+\[
+\mathcal{G}_{\mathrm{disruption}}:\left|\left\{v\in\mathcal{D}_t\setminus\{v_0\}\mid m_v^t=\mathrm{Stopped}\right\}\right|=|\mathcal{V}_{\mathrm{dsr}}|.
+\]
+终止条件定义为
+\[
+\mathrm{done}_t=\mathbf{1}\!\left[\mathcal{G}_{g}(s_t)\ \lor\ \mathcal{L}(s_t)\ \lor\ t\ge T_{\max}\right],
+\]
+其中 \(\mathcal{L}(s_t)\) 表示失效事件（如全部已控节点失去执行能力、节点目标不可达等），\(T_{\max}\) 为回合长度上界；在固定截断下 \(T_{\max}=T_{\mathrm{episode}}\)，在比例截断下可写为 \(T_{\max}=\kappa_{\mathrm{cut}}|\mathcal{V}_g|\)，其中 \(|\mathcal{V}_g|\) 为目标相关可达节点规模。
+
+### 2.3 攻防双方观测空间与动作空间
+攻击者采用“环境类型参数化”空间定义。记环境类型 \(e\in\{\mathrm{global},\mathrm{local},\mathrm{continuous}\}\)（对应实现中的 `global/local/compressed`）。
+
+首先定义节点特征维度 \(d_x\)。设每节点最多编码 \(M\) 个服务槽位、漏洞语义维度为 \(d_l\)，则单节点特征由防火墙向量（\(2M\)）、服务运行向量（\(M\)）、10个标量属性（可见性、持久化、数据状态、规避、重镜像性、权限、主机状态、节点价值、SLA权重）与两组语义向量（\(2d_l\)）构成：
+\[
+d_x=3M+10+2d_l.
+\]
+
+在 `global` 模式下，攻击动作空间为离散索引
+\[
+\mathcal{A}^A_{\mathrm{global}}=\{0,\dots,|\mathcal{U}|-1\},\quad
+|\mathcal{U}|=|\mathcal{V}|\cdot \sum_{v\in\mathcal{V}}\sum_{l\in\mathcal{L}_v}|\mathcal{R}(l)|.
+\]
+每个索引映射到四元动作 \((n_s,n_t,l,o)\)。对应观测空间为全图拼接向量
+\[
+\mathcal{O}^A_{\mathrm{global}}=\mathbb{R}^{|\mathcal{V}|\cdot d_x}.
+\]
+
+在 `local` 模式下，攻击动作空间为
+\[
+\mathcal{A}^A_{\mathrm{local}}=\{0,\dots,N_{vo}+1\},\quad
+N_{vo}=\sum_{l\in\mathcal{L}_{\mathrm{uniq}}}|\mathcal{R}(l)|,
+\]
+其中 \(\mathcal{L}_{\mathrm{uniq}}\) 为环境内去重后的漏洞标识集合。前 \(N_{vo}\) 个动作为 \((l,o)\) 利用动作，后 2 个动作用于“切换源节点/切换目标节点”。观测空间为当前源-目标双节点特征拼接：
+\[
+\mathcal{O}^A_{\mathrm{local}}=\mathbb{R}^{2d_x}.
+\]
+
+在 `continuous` 模式下，攻击动作空间为连续向量
+\[
+\mathcal{A}^A_{\mathrm{cont}}=\mathbb{R}^{2d_n+d_l+d_o},
+\]
+其中 \(d_n\) 为节点嵌入维度，\(d_l\) 为漏洞语义维度，\(d_o\) 为结果类型编码维度（默认 \(d_n=64,d_l=768,d_o=9\)）。观测由图级嵌入与离散计数特征组成：
+\[
+o_t^{A,\mathrm{cont}}=\big(g_t,\zeta_t\big),\quad
+g_t\in\mathbb{R}^{d_n|\mathcal{A}_g|+\mathbf{1}_{\mathrm{node\text{-}goal}}d_n},\ \zeta_t\in\mathbb{R}^{d_{\mathrm{disc}}},
+\]
+其中 \(\mathcal{A}_g\) 为图嵌入聚合算子集合，\(d_{\mathrm{disc}}\) 为离散统计特征维度。
+
+防御者采用统一的 `MultiDiscrete` 动作空间：
+\[
+\mathcal{A}^D=\mathrm{MD}\!\left(5,\ N,\ N,P,2,\ N,P,2,\ N,S,\ N,S\right),
+\]
+其中 \(N\) 为节点上界，\(P\) 为防火墙端口词表大小，\(S\) 为每节点可操作服务槽位。动作类型 \(\tau\in\{0,1,2,3,4\}\) 分别对应 `reimage`、`block_traffic`、`allow_traffic`、`stop_service`、`start_service`。防御观测定义为
+\[
+o_t^D=\big(
+b_t^{\mathrm{inf}},b_t^{\mathrm{fw,in}},b_t^{\mathrm{fw,out}},b_t^{\mathrm{status}},
+b_t^{\mathrm{de}},b_t^{\mathrm{per}},b_t^{\mathrm{reimg}},
+b_t^{\mathrm{svc,run}},b_t^{\mathrm{svc,avl}},
+b_t^{\mathrm{atk,last}},
+b_t^{\mathrm{cand,node}},b_t^{\mathrm{cand,port}},b_t^{\mathrm{cand,svc}}
+\big),
+\]
+即13个二值向量（或展开矩阵）组成的字典观测，分别编码感染状态、防火墙封锁状态、节点运行状态、规避/持久化/可重镜像属性、服务状态、攻击检测与候选动作掩码。
+
+### 2.4 目标导向奖励函数与约束设计
+攻击者奖励采用“结果收益 + 目标进展 - 风险代价”的分解形式：
+\[
+r_t^A=r_t^{\mathrm{out}}+\lambda_g\Delta\Phi_g(s_t,s_{t+1})-\alpha_1 c_t^{\mathrm{vuln}}-\alpha_2 p_t^{\mathrm{inv}}-\alpha_3 p_t^{\mathrm{risk}}+r_t^{\mathrm{term}},
+\]
+其中 \(\Delta\Phi_g\) 为目标势函数增量，针对三类目标分别定义为
+\[
+\Phi_{\mathrm{control}}(s)=\frac{|\{v\in\mathcal{O}\setminus\{v_0\}: \pi_v=\mathrm{ROOT}\}|}{|\mathcal{V}_{\mathrm{ctl}}|},\ 
+\Phi_{\mathrm{discovery}}(s)=\frac{|\mathcal{D}\setminus\{v_0\}|}{|\mathcal{V}_{\mathrm{dsc}}|}-\kappa\frac{\sum_{v\in\mathcal{D}}\mathbf{1}[\delta_v=1,\epsilon_v=0]}{|\mathcal{V}|},
+\]
+\[
+\Phi_{\mathrm{disruption}}(s)=\frac{|\{v\in\mathcal{D}\setminus\{v_0\}:m_v=\mathrm{Stopped}\}|}{|\mathcal{V}_{\mathrm{dsr}}|}.
+\]
+其中 \(\Delta\Phi_g(s_t,s_{t+1})=\Phi_g(s_{t+1})-\Phi_g(s_t)\)，\(\lambda_g\) 为目标相关权重，\(\kappa\) 为 `discovery` 任务中“未完成外传”惩罚系数。为便于复现实验，子项可进一步写为
+\[
+r_t^{\mathrm{out}}=
+\omega_{\mathrm{val}}\Delta V_t
++\omega_{\mathrm{disc}}\Delta N_t^{\mathrm{disc}}
++\omega_{\mathrm{coll}}\Delta N_t^{\mathrm{coll}}
++\omega_{\mathrm{exf}}\Delta N_t^{\mathrm{exf}}
++\omega_{\mathrm{priv}}\Delta N_t^{\mathrm{priv}}
++\omega_{\mathrm{dos}}\Delta V_t^{\mathrm{dos}},
+\]
+\[
+c_t^{\mathrm{vuln}}=\omega_{\mathrm{cost}}\cdot \mathrm{Cost}(l_t),\quad
+p_t^{\mathrm{inv}}=\sum_{j\in\mathcal{J}_{\mathrm{inv}}}\gamma_j\mathbf{1}[E_j^t],\quad
+p_t^{\mathrm{risk}}=\gamma_{\mathrm{fw}}\mathbf{1}[E_{\mathrm{fw}}^t]+\gamma_{\mathrm{port}}\mathbf{1}[E_{\mathrm{port}}^t]+\gamma_{\mathrm{priv}}\mathbf{1}[E_{\mathrm{priv}}^t]+\gamma_{\mathrm{fail}}\mathbf{1}[E_{\mathrm{fail}}^t],
+\]
+其中 \(E_j^t\) 对应非法动作/防火墙阻断/端口未监听/权限不足/利用失败等事件，\(\omega,\gamma\) 与配置化奖励项一一对应。
+
+针对防御者，本文采用与攻击者奖励解耦的内生奖励函数，避免“简单取负”导致的非稳定博弈梯度：
+\[
+r_t^D=
+\beta_1\Delta A_t
+\beta_2\Delta C_t
+\beta_3\Delta Q_t
+-\beta_4\mathbf{1}[A_t<\tau]
+-\beta_5[\Delta^- A_t]_+
+-\beta_6\mathbf{1}[\mathrm{invalid}_t^D]
+-\beta_7 c(a_t^D)
++\beta_8\mathbf{1}[\mathcal{G}_D(s_t)],
+\]
+其中 \(\Delta A_t=A_t-A_{t-1}\)、\(\Delta C_t=C_t-C_{t-1}\)、\(\Delta Q_t=Q_t-Q_{t-1}\)，且
+\[
+[\Delta^-A_t]_+=\max(0,A_{t-1}-A_t).
+\]
+网络可用性 \(A_t\) 采用节点-服务加权计算（与环境执行器一致）：
+\[
+A_t=\frac{\sum_{v\in\mathcal{V}} w_v\,\widetilde{A}_v^t}{\sum_{v\in\mathcal{V}}w_v},
+\]
+\[
+\widetilde{A}_v^t=
+\begin{cases}
+\dfrac{1+\sum_{s\in\mathcal{S}_v}w_{v,s}z_{v,s}^t}{1+\sum_{s\in\mathcal{S}_v}w_{v,s}}, & m_v^t=\mathrm{Running},\\[1.2ex]
+0, & m_v^t\in\{\mathrm{Stopped},\mathrm{Imaging}\}
+\end{cases}
+\]
+其中 \(w_v\) 为节点 SLA 权重，\(w_{v,s}\) 为服务 SLA 权重，\(z_{v,s}^t\in\{0,1\}\) 表示服务运行状态。服务连续性项可定义为
+\[
+Q_t=\frac{\sum_{v\in\mathcal{V}}\sum_{s\in\mathcal{S}_v}w_v w_{v,s} z_{v,s}^t}{\sum_{v\in\mathcal{V}}\sum_{s\in\mathcal{S}_v}w_v w_{v,s}},
+\]
+遏制度定义为
+\[
+C_t=1-\frac{|\mathcal{O}_t|}{|\mathcal{V}|}.
+\]
+动作代价采用分类型代价函数
+\[
+c(a_t^D)=\kappa_{\mathrm{reimg}}\mathbf{1}[\tau_t=\mathrm{reimage}]
++\kappa_{\mathrm{fw}}\mathbf{1}[\tau_t\in\{\mathrm{block},\mathrm{allow}\}]
++\kappa_{\mathrm{svc}}\mathbf{1}[\tau_t\in\{\mathrm{stop\_service},\mathrm{start\_service}\}],
+\]
+\(\mathbf{1}[\mathrm{invalid}_t^D]\) 表示防御动作合法性检查失败，防御目标事件定义为
+\[
+\mathcal{G}_D(s_t)=\mathbf{1}[|\mathcal{O}_t|=0]
+\]
+（静态驱逐目标下）。上述定义使防御奖励完全由防御内生目标决定，并可直接落地计算。
+
+综上，本章在不依赖特定学习算法前提下，完成了多关系拓扑、状态转移、观测动作空间、三目标任务与攻防奖励的统一形式化定义，为第3章的策略推理方法提供了可验证的环境数学基础。
+
+
+
+## 3. 基于大语言模型和强化学习的自适应攻击推理
+
+### 3.1 问题建模与总体方法框架
+为使攻击智能体在动态防御约束下具备可迁移、可解释且高成功率的推理能力，本文将网络攻防过程建模为目标条件化的部分可观测序贯决策问题。设时刻 $t$ 的局部观测为 $o_t$，由可见节点属性、服务状态、防火墙规则、漏洞语义向量及历史交互轨迹共同构成；潜在系统状态记为 $s_t$，任务目标记为 $g\in\{\text{control},\text{discovery},\text{disruption}\}$。智能体需要在部分可观测条件下输出动作并最大化目标回报，同时抑制无效动作、降低暴露风险与策略震荡。
+
+与传统“单策略端到端强化学习”不同，本文提出“规划-生成-校验-仲裁-反思”的闭环架构，将大语言模型的知识推理能力与强化学习的价值估计能力进行功能解耦与再耦合。核心思想在于：由大语言模型完成任务语义理解、攻击链结构化构造与候选动作生成；由仿真规则与强化学习策略完成可执行性校验与价值仲裁；由反思记忆机制完成跨时刻失败模式归纳与策略偏置修正。该框架不将大语言模型视为黑箱动作输出器，而是将其纳入可约束、可验证、可迭代优化的决策管线。
+
+为统一不同环境动作空间，本文引入规范化攻击动作语义表示
+\[
+a_t^\*=(n_s,n_t,v,o),
+\]
+其中 $n_s,n_t$ 分别为源节点与目标节点，$v$ 为漏洞标识，$o$ 为期望攻击结果类型。该语义动作在决策层保持统一，再由动作适配层映射至不同环境类型的执行空间，从而将“策略学习问题”与“动作编码问题”解耦。该设计直接提升了方法在异构环境下的可迁移性与可复用性，并为后续消融分析提供统一比较基线。
+
+【图建议-图X】建议在本节末给出“自适应攻击推理总体框架图”，展示五个模块及其数据流：目标条件化规划、候选生成、规则校验、RL-LLM仲裁、反思记忆更新。
+
+### 3.2 目标条件化分层推理与知识增强候选生成
+在高维且部分可观测的攻防场景中，直接从观测到动作的单跳映射容易产生“高方差探索”和“目标错配”。为此，本文首先引入目标条件化规划层，在每个决策时刻输出中间推理变量，包括子目标分布、风险预算与策略偏置。记规划变量为
+\[
+\Theta_t=\{u_t,\mathbf{b}_t,\rho_t,H_t,\mathcal{F}_t\},
+\]
+其中 $u_t$ 表示当前阶段子目标（如路径扩展、权限提升、关键服务打击），$\mathbf{b}_t$ 表示针对攻击原语的偏置权重，$\rho_t$ 表示风险预算，$H_t$ 表示短期规划视野，$\mathcal{F}_t$ 为任务一致性约束集合。该中间变量并非启发式规则，而是由大语言模型在结构化上下文条件下生成，并在后续模块中作为硬约束或软先验参与决策。
+
+针对不同主任务目标，本文在规划层引入差异化目标语义：在 $\text{control}$ 任务中，偏置优先聚焦“可持续控制链”（侦察-横移-提权）；在 $\text{discovery}$ 任务中，偏置强调“信息增益最大化”（可见性扩展-数据收集-外传闭环）；在 $\text{disruption}$ 任务中，偏置强调“关键资产影响最大化且保持攻击路径连续”。该目标条件化机制避免了统一策略在多任务下的语义冲突，使大模型推理结果与任务奖励方向保持一致。
+
+在候选生成阶段，本文不采用单动作直接输出，而是由大语言模型在知识增强上下文中生成 Top-$K$ 结构化候选动作集。知识增强源包含三类信息：网络局部结构与漏洞语义、历史成功/失败片段、任务目标相关的约束模板。候选动作需同时满足语法可解析性、语义可执行性与目标一致性，形成“多候选+可比较”决策基础。通过候选集而非单输出机制，可以显著降低大模型一次性决策失误导致的连锁退化，并为后续价值仲裁提供充分选择空间。
+
+此外，为抑制候选同质化，本文在生成阶段引入多样性约束与置信度校准，使候选集合在攻击路径、目标节点与漏洞类型上保持结构差异。该机制既保留大模型在复杂知识推理上的优势，也避免其陷入高频模板重复。该部分工作量主要体现在：目标条件化提示模板设计、约束词法规范、候选多样性控制策略、跨任务语义对齐规则库构建。
+
+【表建议-表X】建议列出三类目标下的子目标空间、偏置项定义、风险约束项及对应语义解释。  
+【图建议-图Y】建议展示单个决策时刻的候选生成树与目标偏置对候选分布的影响。
+
+### 3.3 面向可执行性的动作校验与RL-LLM仲裁决策
+候选动作若缺乏可执行性检验，容易产生“语义正确但仿真不可执行”的幻觉问题。为此，本文在生成层后设置规则驱动校验器，对每个候选动作进行先验过滤与风险评估。校验维度包括但不限于：漏洞是否存在、权限是否满足、目标服务是否监听、防火墙是否允许通信、动作结果是否与任务约束冲突。通过该过程，候选集被映射为“可执行候选集”，并为每个候选附加合法性标签、预估收益与风险代价。
+
+在决策层，本文提出 RL-LLM 仲裁函数，将强化学习策略概率、大模型先验与校验评分统一到同一目标函数中：
+\[
+a_t=\arg\max_{a\in\tilde{\mathcal{C}}_t}
+\left[
+\lambda_t \log \pi_\theta(a|s_t) + (1-\lambda_t)\log p_{\text{LLM}}(a|o_t,g,M_t)
++\eta \hat{R}(a)-\zeta \hat{P}(a)-\xi \delta_g(a)
+\right],
+\]
+其中 $\tilde{\mathcal{C}}_t$ 为校验后候选集，$\hat{R}(a)$ 为短视收益评估，$\hat{P}(a)$ 为风险估计，$\delta_g(a)$ 为目标不一致惩罚项。关键在于自适应权重 $\lambda_t$：当强化学习策略不确定性升高或近期无效动作率上升时，系统提升大模型先验的影响；当策略稳定且价值函数置信度高时，系统提升强化学习主导程度。该动态机制实现“探索期依赖知识推理、收敛期依赖价值估计”的平滑过渡。
+
+本文进一步引入跨环境动作适配机制，将统一语义动作映射到不同执行空间，保证仲裁层在任务语义上保持一致，在动作编码上保持兼容。该设计使得方法无需针对每种环境重写高层推理逻辑，显著降低多场景扩展成本，并提升实验公平性：所有对比算法共享同一语义动作定义与校验协议，仅在决策权重与候选来源上存在差异。
+
+该小节的创新点在于：将“大模型知识先验”从不可控文本建议转化为可量化决策因子，并通过形式化仲裁函数与规则校验器实现可验证融合。这一机制在方法上同时解决了大模型幻觉、强化学习冷启动和多目标任务错配三类问题。
+
+【图建议-图Z】建议给出“候选动作校验与仲裁流程图”，并标注被过滤候选比例。  
+【算法建议-算法1】建议给出“自适应仲裁攻击决策算法（单步）”伪代码。
+
+### 3.4 反思记忆闭环与训练评估范式
+为了使系统具备跨时刻自修正能力，本文设计了双层反思记忆机制：情景记忆用于记录当前回合中的失败链路、有效链路与上下文触发条件；语义记忆用于跨回合归纳稳定模式，如“何种目标下哪些漏洞类型更具收益-风险优势”“何类失败在特定拓扑中高频出现”。每步执行后，系统将观测、动作、结果、奖励与失败标签写入记忆，并在下一步规划与生成阶段检索相关片段，形成“执行-反思-再规划”的闭环更新。
+
+该闭环机制的关键价值不在于简单历史缓存，而在于将失败经验结构化为可重用策略偏置。具体而言，系统将失败事件映射为标准化标签族（如权限不足、端口不匹配、防火墙阻断、重复利用无收益等），并对其关联条件进行统计聚合，使后续规划层能够显式降低相似风险动作的优先级。由此，方法在训练中表现为无效动作率持续下降、策略稳定性提升、跨场景迁移鲁棒性增强。
+
+在训练范式上，本文采用“强化学习主干 + 大模型推理增强”的联合优化思路。强化学习负责长期回报优化与策略收敛，大模型负责提供目标语义先验与结构化候选，二者通过仲裁层耦合并共享反思记忆。该范式避免了纯大模型方法在长时序任务上的不稳定，也避免了纯强化学习在复杂语义任务上的高样本开销。与单模块方案相比，本文方法在系统工程层面额外引入了：多阶段提示模板、记忆检索器、候选校验器、跨环境动作适配器、仲裁权重调度器和完整消融评估管线，形成显著的方法工作量与可复现贡献。
+
+建议的实验评估应至少覆盖四类比较：仅强化学习、仅大模型单模块、仅大模型多模块、本文完整方法；并通过模块消融验证各环节贡献。核心指标建议包括：任务成功率、到达目标步数、无效动作率、累积回报、跨场景迁移性能、推理时延与推理成本。统计检验建议采用多随机种子下的置信区间与显著性检验，以确保结论稳健。
+
+【表建议-表Y】建议汇总主结果与消融结果（按 control/discovery/disruption 分组）。  
+【图建议-图W】建议给出训练过程中的成功率与无效动作率收敛曲线。  
+【图建议-图V】建议展示不同模块开启组合下的收益-成本帕累托前沿。

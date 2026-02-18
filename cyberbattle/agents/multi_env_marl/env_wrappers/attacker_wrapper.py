@@ -26,6 +26,9 @@ class AttackerEnvWrapper(gym.Env, IRewardStore, IEnvironmentObserver):
         cyber_env: gym.Env,
         event_source: Optional[EnvironmentEventSource] = None,
         max_timesteps: Optional[int] = None,
+        training_non_terminal_mode: bool = False,
+        deadlock_patience: int = 0,
+        deadlock_reset_on_no_owned_running: bool = False,
         log_episode_end: bool = False,
         log_episode_summary: bool = True,
         episode_log_prefix: str = "",
@@ -35,6 +38,10 @@ class AttackerEnvWrapper(gym.Env, IRewardStore, IEnvironmentObserver):
         self.action_space = cyber_env.action_space
         self.observation_space = cyber_env.observation_space
         self.max_timesteps = max_timesteps
+        self.training_non_terminal_mode = bool(training_non_terminal_mode)
+        self.deadlock_patience = max(0, int(deadlock_patience or 0))
+        self.deadlock_reset_on_no_owned_running = bool(deadlock_reset_on_no_owned_running)
+        self._no_progress_steps = 0
         self.timesteps: Optional[int] = None
         self.rewards: List[float] = []
         self.action_count = 0
@@ -74,6 +81,80 @@ class AttackerEnvWrapper(gym.Env, IRewardStore, IEnvironmentObserver):
             event_source = EnvironmentEventSource()
         self.event_source = event_source
         event_source.add_observer(self)
+
+    def _get_actual_outcome(self, info: Any = None):
+        try:
+            base_env = unwrap_current_env(self.cyber_env)
+            outcome = getattr(base_env, "outcome_obtained", None)
+            if outcome is not None:
+                return outcome
+        except Exception:
+            pass
+        if isinstance(info, dict):
+            return info.get("outcome_class")
+        return None
+
+    def _has_running_owned_node(self) -> bool:
+        try:
+            base_env = unwrap_current_env(self.cyber_env)
+            owned_nodes = list(getattr(base_env, "owned_nodes", []))
+            for node_id in owned_nodes:
+                node_info = base_env.get_node(node_id)
+                if getattr(node_info, "status", None) == model.MachineStatus.Running:
+                    return True
+            return False
+        except Exception:
+            return True
+
+    def _is_progress_outcome(self, actual_outcome, reward: float) -> bool:
+        if actual_outcome is None:
+            return reward > 0.0
+        if isinstance(
+            actual_outcome,
+            (
+                model.Discovery,
+                model.Reconnaissance,
+                model.LateralMove,
+                model.CredentialAccess,
+                model.PrivilegeEscalation,
+                model.Collection,
+                model.Exfiltration,
+                model.Persistence,
+                model.DefenseEvasion,
+                model.DenialOfService,
+            ),
+        ):
+            return True
+        if isinstance(
+            actual_outcome,
+            (
+                model.InvalidAction,
+                model.NoVulnerability,
+                model.NoEnoughPrivilege,
+                model.OutcomeNonPresent,
+                model.UnsuccessfulAction,
+                model.NoNeededAction,
+                model.RepeatedResult,
+                model.NonListeningPort,
+                model.FirewallBlock,
+                model.NonRunningMachine,
+            ),
+        ):
+            return False
+        return reward > 0.0
+
+    def _should_deadlock_reset(self, actual_outcome, reward: float) -> bool:
+        if not self.training_non_terminal_mode:
+            return False
+        if self.deadlock_patience <= 0:
+            return False
+        if self.deadlock_reset_on_no_owned_running and not self._has_running_owned_node():
+            self._no_progress_steps += 1
+        elif self._is_progress_outcome(actual_outcome, reward):
+            self._no_progress_steps = 0
+        else:
+            self._no_progress_steps += 1
+        return self._no_progress_steps >= self.deadlock_patience
 
     @property
     def episode_rewards(self) -> List[float]:
@@ -204,6 +285,9 @@ class AttackerEnvWrapper(gym.Env, IRewardStore, IEnvironmentObserver):
             terminated, truncated = bool(done), False
 
         reward = float(reward)
+        if self.training_non_terminal_mode:
+            terminated = False
+            truncated = False
         self.rewards.append(reward)
         self.timesteps = int(self.timesteps or 0) + 1
         self.action_count += 1
@@ -233,14 +317,7 @@ class AttackerEnvWrapper(gym.Env, IRewardStore, IEnvironmentObserver):
         self._action_counts[label] = self._action_counts.get(label, 0) + 1
 
         # Track failure outcomes that indicate defender impact or action failure.
-        actual_outcome = None
-        try:
-            base_env = unwrap_current_env(self.cyber_env)
-            actual_outcome = getattr(base_env, "outcome_obtained", None)
-        except Exception:
-            actual_outcome = None
-        if actual_outcome is None and isinstance(info, dict):
-            actual_outcome = info.get("outcome_class")
+        actual_outcome = self._get_actual_outcome(info)
         if actual_outcome is not None:
             failure_types = (
                 model.FirewallBlock,
@@ -273,11 +350,23 @@ class AttackerEnvWrapper(gym.Env, IRewardStore, IEnvironmentObserver):
         if self.max_timesteps is not None and self.timesteps >= self.max_timesteps:
             truncated = True
 
+        if self._should_deadlock_reset(actual_outcome, reward):
+            truncated = True
+            if not isinstance(info, dict):
+                info = {}
+            else:
+                info = dict(info)
+            info["deadlock_reset"] = True
+            info["deadlock_no_progress_steps"] = int(self._no_progress_steps)
+            self.last_outcome = "deadlock_reset"
+
         done = bool(terminated or truncated)
         self.last_reward = reward
         self.last_terminated = bool(terminated)
         self.last_truncated = bool(truncated)
         self._last_info = dict(info) if isinstance(info, dict) else {}
+        if actual_outcome is not None:
+            self._last_info["outcome_class"] = actual_outcome
 
         if done and hasattr(self.cyber_env, "signal_episode_done"):
             self.cyber_env.signal_episode_done(self._infer_episode_reason())
@@ -408,6 +497,7 @@ class AttackerEnvWrapper(gym.Env, IRewardStore, IEnvironmentObserver):
         self._owned_nodes_seen = set()
         self._failure_counts = {}
         self.last_episode_failure_counts = None
+        self._no_progress_steps = 0
 
         return observation, dict(info) if isinstance(info, dict) else {}
 

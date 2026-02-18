@@ -60,5 +60,12 @@ max_train_envs: 8 # limit number of training envs (n); null for all
 vec_env_type: "dummy" # subproc or dummy
 subproc_start_method: "fork" # fork, spawn, or forkserver
 
+# MARL training-mode controls (training only)
+marl_non_terminal_training: true # disable attacker/defender game-over termination during training
+marl_disable_terminal_rewards: true # disable terminal win/loss reward overrides during training
+marl_non_terminal_max_timesteps: 0 # 0/null disables wrapper timeout truncation in non-terminal mode
+marl_deadlock_patience: 32 # technical reset when no progress persists this many steps
+marl_deadlock_reset_on_no_owned_running: true # count no-running-owned-node steps toward deadlock
+
 # Reduce log volume for stability/perf
 attacker_log_episode_summary: false
