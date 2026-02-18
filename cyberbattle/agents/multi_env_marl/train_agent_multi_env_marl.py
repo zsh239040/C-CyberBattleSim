@@ -36,7 +36,7 @@ sys.path.insert(0, project_root)
 
 from cyberbattle.utils.train_utils import replace_with_classes, check_args, clean_config_save, algorithm_models, reccurrent_algorithms  # noqa: E402
 from cyberbattle.utils.math_utils import linear_schedule, set_seeds  # noqa: E402
-from cyberbattle.utils.file_utils import extract_metric_data, load_yaml, save_yaml  # noqa: E402
+from cyberbattle.utils.file_utils import load_yaml, save_yaml  # noqa: E402
 from cyberbattle._env.cyberbattle_env_switch import RandomSwitchEnv  # noqa: E402
 from cyberbattle.utils.log_utils import setup_logging  # noqa: E402
 from cyberbattle.utils.envs_utils import wrap_graphs_to_compressed_envs, wrap_graphs_to_global_envs, wrap_graphs_to_local_envs  # noqa: E402

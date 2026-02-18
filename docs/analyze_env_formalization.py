@@ -17,7 +17,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 from statistics import mean
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence
 
 # Ensure pickled objects (cyberbattle.* modules) are importable when script runs from docs/.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
