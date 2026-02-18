@@ -49,8 +49,8 @@ g\in\{\mathrm{control},\mathrm{discovery},\mathrm{disruption}\}.
 \]
 设入口节点为 \(v_0\)，基于三类边的最短路可达性定义目标相关可达集
 \[
-\mathcal{V}_{\mathrm{ctl}}=\{v\neq v_0\mid \mathrm{dist}_{\mathcal{E}^{A}}(v_0,v)<\infty\},\ 
-\mathcal{V}_{\mathrm{dsc}}=\{v\neq v_0\mid \mathrm{dist}_{\mathcal{E}^{K}}(v_0,v)<\infty\},\ 
+\mathcal{V}_{\mathrm{ctl}}=\{v\neq v_0\mid \mathrm{dist}_{\mathcal{E}^{A}}(v_0,v)<\infty\},\
+\mathcal{V}_{\mathrm{dsc}}=\{v\neq v_0\mid \mathrm{dist}_{\mathcal{E}^{K}}(v_0,v)<\infty\},\
 \mathcal{V}_{\mathrm{dsr}}=\{v\neq v_0\mid \mathrm{dist}_{\mathcal{E}^{D}}(v_0,v)<\infty\}.
 \]
 对应目标达成条件分别为
@@ -131,7 +131,7 @@ r_t^A=r_t^{\mathrm{out}}+\lambda_g\Delta\Phi_g(s_t,s_{t+1})-\alpha_1 c_t^{\mathr
 \]
 其中 \(\Delta\Phi_g\) 为目标势函数增量，针对三类目标分别定义为
 \[
-\Phi_{\mathrm{control}}(s)=\frac{|\{v\in\mathcal{O}\setminus\{v_0\}: \pi_v=\mathrm{ROOT}\}|}{|\mathcal{V}_{\mathrm{ctl}}|},\ 
+\Phi_{\mathrm{control}}(s)=\frac{|\{v\in\mathcal{O}\setminus\{v_0\}: \pi_v=\mathrm{ROOT}\}|}{|\mathcal{V}_{\mathrm{ctl}}|},\
 \Phi_{\mathrm{discovery}}(s)=\frac{|\mathcal{D}\setminus\{v_0\}|}{|\mathcal{V}_{\mathrm{dsc}}|}-\kappa\frac{\sum_{v\in\mathcal{D}}\mathbf{1}[\delta_v=1,\epsilon_v=0]}{|\mathcal{V}|},
 \]
 \[
@@ -233,7 +233,7 @@ a_t^\*=(n_s,n_t,v,o),
 
 此外，为抑制候选同质化，本文在生成阶段引入多样性约束与置信度校准，使候选集合在攻击路径、目标节点与漏洞类型上保持结构差异。该机制既保留大模型在复杂知识推理上的优势，也避免其陷入高频模板重复。该部分工作量主要体现在：目标条件化提示模板设计、约束词法规范、候选多样性控制策略、跨任务语义对齐规则库构建。
 
-【表建议-表X】建议列出三类目标下的子目标空间、偏置项定义、风险约束项及对应语义解释。  
+【表建议-表X】建议列出三类目标下的子目标空间、偏置项定义、风险约束项及对应语义解释。
 【图建议-图Y】建议展示单个决策时刻的候选生成树与目标偏置对候选分布的影响。
 
 ### 3.3 面向可执行性的动作校验与RL-LLM仲裁决策
@@ -253,7 +253,7 @@ a_t=\arg\max_{a\in\tilde{\mathcal{C}}_t}
 
 该小节的创新点在于：将“大模型知识先验”从不可控文本建议转化为可量化决策因子，并通过形式化仲裁函数与规则校验器实现可验证融合。这一机制在方法上同时解决了大模型幻觉、强化学习冷启动和多目标任务错配三类问题。
 
-【图建议-图Z】建议给出“候选动作校验与仲裁流程图”，并标注被过滤候选比例。  
+【图建议-图Z】建议给出“候选动作校验与仲裁流程图”，并标注被过滤候选比例。
 【算法建议-算法1】建议给出“自适应仲裁攻击决策算法（单步）”伪代码。
 
 ### 3.4 反思记忆闭环与训练评估范式
@@ -265,6 +265,6 @@ a_t=\arg\max_{a\in\tilde{\mathcal{C}}_t}
 
 建议的实验评估应至少覆盖四类比较：仅强化学习、仅大模型单模块、仅大模型多模块、本文完整方法；并通过模块消融验证各环节贡献。核心指标建议包括：任务成功率、到达目标步数、无效动作率、累积回报、跨场景迁移性能、推理时延与推理成本。统计检验建议采用多随机种子下的置信区间与显著性检验，以确保结论稳健。
 
-【表建议-表Y】建议汇总主结果与消融结果（按 control/discovery/disruption 分组）。  
-【图建议-图W】建议给出训练过程中的成功率与无效动作率收敛曲线。  
+【表建议-表Y】建议汇总主结果与消融结果（按 control/discovery/disruption 分组）。
+【图建议-图W】建议给出训练过程中的成功率与无效动作率收敛曲线。
 【图建议-图V】建议展示不同模块开启组合下的收益-成本帕累托前沿。
